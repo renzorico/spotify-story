@@ -6,9 +6,11 @@ const D = window.DATA;
 const SLOTS = ["#b4f03c", "#ff4fa0", "#2ec5ff", "#ffb22e", "#9b7bff", "#ff6a3d", "#3fe0b0"];
 const OTHER = "#5c5b64";
 const OTHER_LIGHT = "#9a99a6"; // non-top artists where a mark must stay visible on black
-const ACCENT = SLOTS[0];
-const SECOND = SLOTS[1];
-const RAMP = ["#141418", "#1d3a10", "#3d7a18", "#86c92c", "#e2ff9a"];
+const ACCENT = SLOTS[0]; // lime: Canserbero and the page chrome, nothing else
+/* Charts that are not about one artist use neutrals, so colour never implies an artist link. */
+const HEAT = ["#141418", "#26262d", "#4d4c56", "#9a99a6", "#f3f2ee"];
+const NEUTRAL_HI = "#e6e5df";
+const NEUTRAL_LO = "#8b8a94";
 const HALO = "rgba(0,0,0,.6)";
 const ON_NEON = "#09090b";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -50,12 +52,44 @@ function yearTicks(svg, x, H, inset) {
 /* Deterministic jitter so dots do not move between redraws. */
 const jitter = i => { const v = Math.sin(i * 12.9898 + 78.233) * 43758.5453; return v - Math.floor(v); };
 
+/* Keyboard tour: the chart is one tab stop; arrow keys step through its marks and show the same
+   tooltip a pointer would (the tooltip is a role=status region, so screen readers hear it). */
+const TOUR_KEYS = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+function keyboardTour(svg, marks, show, clear) {
+  const nodes = marks.nodes();
+  let index = -1;
+  const go = k => {
+    index = (k + nodes.length) % nodes.length;
+    const node = nodes[index], box = node.getBoundingClientRect();
+    show({ clientX: box.x + box.width / 2, clientY: box.y + box.height / 2 }, d3.select(node).datum(), node);
+  };
+  svg.attr("tabindex", 0).attr("aria-label", `${svg.attr("aria-label")}. Focus it and use the arrow keys to read each value.`)
+    .on("focus", () => go(Math.max(index, 0)))
+    .on("blur", clear)
+    .on("keydown", event => {
+      const step = TOUR_KEYS[event.key];
+      if (step) { event.preventDefault(); go(index + step); }
+      else if (event.key === "Home") { event.preventDefault(); go(0); }
+      else if (event.key === "End") { event.preventDefault(); go(nodes.length - 1); }
+      else if (event.key === "Escape") svg.node().blur();
+    });
+}
+/* Drop labels whose box overlaps one already placed; callers pass them biggest first. */
+function placeWithoutOverlap(items, boxOf) {
+  const placed = [];
+  return items.filter(item => {
+    const b = boxOf(item);
+    if (placed.some(p => b.x0 < p.x1 && b.x1 > p.x0 && b.y0 < p.y1 && b.y1 > p.y0)) return false;
+    placed.push(b);
+    return true;
+  });
+}
+
 /* ================= Hero ================= */
 function drawHero() {
   const m = D.meta;
-  setText("hero-range", `${longDay(FIRST_DAY)} – ${longDay(parseDay(m.lastDay))}`);
   document.getElementById("hero-title").innerHTML = `<span class="num">${fmt(Math.round(m.hours))}</span> hours of music.`;
-  setText("hero-lede", `That is ${Math.round(m.hours / 24)} full days and nights of sound, spread over ${fmt(m.spanDays)} days. ` +
+  setText("hero-lede", `Between ${longDay(FIRST_DAY)} and ${longDay(parseDay(m.lastDay))} I played ${Math.round(m.hours / 24)} full days and nights of sound. ` +
     `I pressed play ${fmt(m.plays)} times, and music played on ${pct(m.activeDays / m.spanDays)} of those days.`);
   const stats = [[m.plays, "plays"], [m.artists, "artists"], [m.tracks, "different songs"], [m.topDay.hours, `hours on my biggest day, ${longDay(parseDay(m.topDay.date))}`]];
   const box = document.getElementById("stats");
@@ -85,7 +119,7 @@ function startEqualizer() {
     ctx.clearRect(0, 0, W, H);
     const step = W / weeks.length, base = H * 0.86, room = H * 0.62;
     const grad = ctx.createLinearGradient(0, base - room, 0, base);
-    grad.addColorStop(0, SLOTS[2]); grad.addColorStop(1, ACCENT);
+    grad.addColorStop(0, "#e2ff9a"); grad.addColorStop(1, ACCENT);
     ctx.fillStyle = grad;
     weeks.forEach((v, i) => {
       const wave = REDUCED ? 1 : 0.82 + 0.18 * Math.sin(t / 420 + i * 0.35) * Math.sin(t / 1300 + i * 0.07);
@@ -124,18 +158,26 @@ function drawRiver() {
   const bands = svg.append("g").attr("clip-path", wipeClip(svg, "river", root, W, H))
     .selectAll("path").data(stack).join("path").attr("d", area)
     .attr("fill", (_, k) => SLOTS[k]).attr("stroke", "#09090b").attr("stroke-width", 0.7);
-  bands.on("pointermove", function (event, s) {
-    const m = d3.bisectCenter(MONTHS.map(Number), +x.invert(d3.pointer(event, svg.node())[0]));
+  const peakOf = s => d3.maxIndex(D.river.series[s.key]);
+  const show = (event, s, m) => {
     bands.attr("opacity", d => (d.key === s.key ? 1 : 0.22));
     const raw = D.river.series[s.key][m];
     showTip(event, `<b>${esc(D.artists[s.key])}</b>${monthName(MONTHS[m])}: ${fmtH(raw)} hours<br><span class="k">${pct(raw / D.river.allHours[m])} of everything I played that month</span>`);
-  }).on("pointerleave", () => { bands.attr("opacity", 1); hideTip(); });
+  };
+  const clear = () => { bands.attr("opacity", 1); hideTip(); };
+  bands.on("pointermove", (event, s) => show(event, s, d3.bisectCenter(MONTHS.map(Number), +x.invert(d3.pointer(event, svg.node())[0]))))
+    .on("pointerleave", clear);
+  keyboardTour(svg, bands, (event, s) => show(event, s, peakOf(s)), clear);
   if (W >= 700) {
-    const labels = svg.append("g").style("opacity", isWaiting("river-labels") ? 0 : 1);
-    stack.slice(0, 3).forEach((s, k) => {
+    /* Every band is named on the chart at its thickest month, unless that spot is taken. */
+    const labels = svg.append("g").style("opacity", isWaiting("river-labels") ? 0 : 1).style("pointer-events", "none");
+    const spots = stack.map((s, k) => {
       const i = d3.maxIndex(s, d => d[1] - d[0]);
-      labelOn(labels.append("text").attr("x", Math.min(W - 80, Math.max(inset, x(MONTHS[i])))).attr("y", y((s[i][0] + s[i][1]) / 2) + 4)
-        .attr("text-anchor", "middle").text(D.artists[k]), SLOTS[k]);
+      const w = D.artists[k].length * 7.6 + 8;
+      return { k, cx: Math.min(W - inset - w / 2, Math.max(inset + w / 2, x(MONTHS[i]))), cy: y((s[i][0] + s[i][1]) / 2), w, thick: y(s[i][0]) - y(s[i][1]) };
+    }).filter(p => p.thick >= 16).sort((a, b) => b.thick - a.thick);
+    placeWithoutOverlap(spots, p => ({ x0: p.cx - p.w / 2, x1: p.cx + p.w / 2, y0: p.cy - 9, y1: p.cy + 9 })).forEach(p => {
+      labelOn(labels.append("text").attr("x", p.cx).attr("y", p.cy + 4).attr("text-anchor", "middle").text(D.artists[p.k]), SLOTS[p.k]);
     });
     if (isWaiting("river-labels")) revealOnView("river-labels", root, () => labels.transition().delay(MOTION_MS).duration(400).style("opacity", 1));
   }
@@ -163,6 +205,14 @@ function drawRace() {
   const bars = svg.append("g").attr("clip-path", "url(#race-clip)");
   const rankAt = i => { const order = d3.range(names.length).sort((a, b) => cum[b][i] - cum[a][i]); const r = []; order.forEach((k, pos) => { r[k] = pos; }); return r; };
   const ranks = MONTHS.map((_, i) => rankAt(i));
+  /* The month the final leader took first place for good: the title's claim, marked on the chart. */
+  const leader = d3.range(names.length).sort((a, b) => cum[b][last] - cum[a][last])[0];
+  let since = 0;
+  for (let i = last; i >= 0; i--) if (ranks[i][leader] !== 0) { since = i + 1; break; }
+  const before = since > 0 ? names[ranks[since - 1].indexOf(0)] : null;
+  const callout = svg.append("text").attr("x", W - inset).attr("y", rowH / 2).attr("dy", "0.35em").attr("text-anchor", "end")
+    .style("fill", "var(--ink)").style("font-size", "13px").style("font-weight", 600)
+    .attr("paint-order", "stroke").attr("stroke", "#09090b").attr("stroke-width", 4);
   function render(f) {
     const i0 = Math.floor(f), i1 = Math.min(last, i0 + 1), t = f - i0;
     const items = names.map((name, k) => ({ name, k, v: cum[k][i0] * (1 - t) + cum[k][i1] * t, r: ranks[i0][k] * (1 - t) + ranks[i1][k] * t }))
@@ -190,6 +240,7 @@ function drawRace() {
       d3.select(this).attr("x", fits ? x(d.v) + 8 : x(d.v) + 18 + d.name.length * 7.4).text(fmt(Math.round(d.v)));
     });
     g.on("pointermove", (event, d) => showTip(event, `<b>${esc(d.name)}</b>${fmt(Math.round(d.v))} hours by ${monthName(MONTHS[Math.round(f)])}`)).on("pointerleave", hideTip);
+    callout.text(before && f >= since && !isPhone() ? `${names[leader]} takes #1 in ${monthName(MONTHS[since])}` : "");
     watermark.text(monthName(MONTHS[Math.round(f)]));
     setText("race-label", monthName(MONTHS[Math.round(f)]));
     document.getElementById("race-scrub").value = f;
@@ -201,18 +252,15 @@ function drawRace() {
   render(race.f);
   setPlayButton();
   if (!race.started) revealOnView("race", root, () => { race.started = true; if (race.playing) playRace(); });
-
-  const leader = d3.range(names.length).sort((a, b) => cum[b][last] - cum[a][last])[0];
-  let since = 0;
-  for (let i = last; i >= 0; i--) if (ranks[i][leader] !== 0) { since = i + 1; break; }
-  const before = since > 0 ? names[ranks[since - 1].indexOf(0)] : null;
   setText("race-title", before
     ? `${names[leader]} passed ${before} in ${monthName(MONTHS[since])} and never gave the lead back.`
     : `${names[leader]} led the race from the first month to the last.`);
 }
+const ICON_PLAY = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4.5 2.8v10.4a.6.6 0 0 0 .9.5l8.2-5.2a.6.6 0 0 0 0-1L5.4 2.3a.6.6 0 0 0-.9.5z" fill="currentColor"/></svg>';
+const ICON_PAUSE = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="3.5" y="2.5" width="3.2" height="11" rx="1" fill="currentColor"/><rect x="9.3" y="2.5" width="3.2" height="11" rx="1" fill="currentColor"/></svg>';
 function setPlayButton() {
   const b = document.getElementById("race-play");
-  b.textContent = race.playing ? "❚❚" : "▶";
+  b.innerHTML = race.playing ? ICON_PAUSE : ICON_PLAY;
   b.setAttribute("aria-label", race.playing ? "Pause race" : "Play race");
   b.setAttribute("aria-pressed", String(race.playing));
 }
@@ -271,11 +319,14 @@ function drawObsessions() {
   rows.append("text").attr("x", o => x(parseDay(o.peakWeek)) + 8).attr("y", o => -y(o.peak) + 10)
     .style("fill", "var(--ink-2)").style("font-size", "12px").attr("paint-order", "stroke").attr("stroke", "#09090b").attr("stroke-width", 3).text(o => o.peak);
   if (waiting) revealOnView("obsessions", root, () => paths.transition().delay((_, i) => i * 70).duration(900).ease(d3.easeBackOut.overshoot(1.4)).attr("transform", "scale(1,1)"));
-  rows.on("pointermove", (event, o) => {
+  const show = (event, o) => {
     rows.attr("opacity", d => (d === o ? 1 : 0.25));
     showTip(event, `<b>${esc(o.track)}</b>${esc(o.artist)}<br>${o.peak} plays in the week of ${longDay(parseDay(o.peakWeek))}<br>` +
       `<span class="k">${o.total} plays in total; ${pct(o.nearPeakShare)} of them within a week of the peak</span>`);
-  }).on("pointerleave", () => { rows.attr("opacity", 1); hideTip(); });
+  };
+  const clear = () => { rows.attr("opacity", 1); hideTip(); };
+  rows.on("pointermove", show).on("pointerleave", clear);
+  keyboardTour(svg, paths, show, clear);
   const top = obs[0];
   setText("obs-title", `I played “${top.track}” ${top.peak} times in a single week.`);
 }
@@ -289,9 +340,11 @@ function drawSpotlight() {
   const years = Object.entries(S.yearHours), maxYear = d3.max(years, ([, h]) => h);
   document.getElementById("spot-years").innerHTML = years.map(([yr, h]) =>
     `<div class="year"><span>${yr}</span><span class="big">${fmtH(h)} h</span><span class="swatch" style="width:${Math.max(4, (100 * h) / maxYear)}%"></span></div>`).join("");
-  const songColor = s => (s >= 0 ? SLOTS[s] : OTHER);
+  /* Only the top three songs get a colour, all from Canserbero's lime family; the rest stay grey. */
+  const SONG_COLORS = [ACCENT, NEUTRAL_HI, "#6f9a22"];
+  const songColor = s => (s >= 0 && s < SONG_COLORS.length ? SONG_COLORS[s] : OTHER);
   const legend = document.getElementById("spot-legend");
-  legend.innerHTML = S.songs.map((s, i) => `<li><button type="button" data-song="${i}" aria-pressed="${spot.isolated === i}"><i style="background:${SLOTS[i]}"></i>${esc(s)} · ${S.songPlays[i]}</button></li>`).join("") +
+  legend.innerHTML = S.songs.slice(0, SONG_COLORS.length).map((s, i) => `<li><button type="button" data-song="${i}" aria-pressed="${spot.isolated === i}"><i style="background:${SONG_COLORS[i]}"></i>${esc(s)} · ${S.songPlays[i]}</button></li>`).join("") +
     `<li><i style="background:${OTHER}"></i>Other songs</li>`;
   legend.querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
     const s = +b.dataset.song; spot.isolated = spot.isolated === s ? null : s;
@@ -323,10 +376,12 @@ function drawSpotlight() {
     }
     ctx.globalAlpha = 1;
     ctx.textAlign = "left"; ctx.fillStyle = "#c4c3bb";
+    /* Hour labels sit on a page-coloured plate so no gridline or dot runs through them. */
     [0, 6, 12, 18].forEach(h => {
-      ctx.lineWidth = 4; ctx.strokeStyle = "#09090b"; ctx.strokeText(hh(h), inset, y(h) + 9); ctx.fillText(hh(h), inset, y(h) + 9);
+      const ly = y(h) + 11, lw = ctx.measureText(hh(h)).width;
+      ctx.fillStyle = "#09090b"; ctx.fillRect(inset - 4, ly - 9, lw + 8, 18);
+      ctx.fillStyle = "#c4c3bb"; ctx.fillText(hh(h), inset, ly);
     });
-    ctx.lineWidth = 1;
   }
   paint();
   if (spot.progress < 1) revealOnView("spotlight", root, () => {
@@ -342,7 +397,7 @@ function drawSpotlight() {
   const y0 = years[0], peakYear = years.reduce((a, b) => (b[1] > a[1] ? b : a));
   setText("spot-title", `${S.artist} went from ${fmtH(y0[1])} hours in ${y0[0]} to ${fmtH(peakYear[1])} hours in ${peakYear[0]}.`);
   setText("spot-sub", `${fmt(S.plays)} plays and ${fmtH(S.hours)} hours on ${S.activeDays} different days, with a longest run of ${S.longestStreak} days in a row. ` +
-    `Each dot is one play: the date runs left to right and the hour of day top to bottom; click a song to isolate it.`);
+    `Each dot is one play, by date and hour of day; my three most played songs are lit, and clicking one isolates it.`);
 }
 
 /* ================= 5. Day clock ================= */
@@ -353,33 +408,39 @@ function drawClock() {
   const size = Math.min(W, H), R = size / 2 - 44 /* room for hour labels */, r0 = R * 0.3, ring = (R - r0) / 7;
   const cells = D.clock, maxPlays = d3.max(cells, c => c.plays);
   // Domain starts at the quietest cell, not zero, so the ramp spends its range on real differences.
-  const color = d3.scaleSequential(d3.interpolateRgbBasis(RAMP)).domain([d3.min(cells, c => c.plays), maxPlays]);
+  const color = d3.scaleSequential(d3.interpolateRgbBasis(HEAT)).domain([d3.min(cells, c => c.plays), maxPlays]);
   const svg = d3.select(root).append("svg").attr("width", W).attr("height", H).attr("role", "img")
     .attr("aria-label", "Radial heat map of plays by hour of day and weekday");
   const g = svg.append("g").attr("transform", `translate(${W / 2},${H / 2})`);
+  /* A gap at midnight holds the weekday names, so they never sit on top of cells. */
+  const GAP = size >= 360 ? 0.42 : 0.18;
+  const angle = h => GAP / 2 + (h / 24) * (2 * Math.PI - GAP);
   const arc = d3.arc().innerRadius(c => r0 + c.dow * ring + 1).outerRadius(c => r0 + (c.dow + 1) * ring - 1)
-    .startAngle(c => (c.hr / 24) * 2 * Math.PI).endAngle(c => ((c.hr + 1) / 24) * 2 * Math.PI).padAngle(0.012).cornerRadius(2);
+    .startAngle(c => angle(c.hr)).endAngle(c => angle(c.hr + 1)).padAngle(0.012).cornerRadius(2);
   const waiting = isWaiting("clock");
   const paths = g.selectAll("path").data(cells).join("path").attr("d", arc).attr("fill", c => color(c.plays)).attr("opacity", waiting ? 0 : 1);
   if (waiting) revealOnView("clock", root, () => paths.transition().delay(c => c.hr * 45 + c.dow * 12).duration(500).attr("opacity", 1));
   d3.range(0, 24, size < 420 ? 6 : 3).forEach(h => {
-    const a = (h / 24) * 2 * Math.PI;
-    g.append("text").attr("x", Math.sin(a) * (R + 14)).attr("y", -Math.cos(a) * (R + 14) + 4).attr("text-anchor", "middle").text(hh(h));
+    const a = angle(h);
+    g.append("text").attr("x", Math.sin(a) * (R + 16)).attr("y", -Math.cos(a) * (R + 16) + 4).attr("text-anchor", "middle").text(hh(h));
   });
   if (size >= 360) DAYS_SHORT.forEach((d, i) => {
-    g.append("text").attr("x", 4).attr("y", -(r0 + (i + 0.5) * ring) + 4).style("font-size", "11px").style("fill", "var(--ink-2)")
-      .attr("paint-order", "stroke").attr("stroke", "#09090b").attr("stroke-width", 3).text(d);
+    g.append("text").attr("x", 0).attr("y", -(r0 + (i + 0.5) * ring) + 4).attr("text-anchor", "middle")
+      .style("font-size", "12px").style("fill", "var(--ink-2)").text(d);
   });
   const peak = cells.reduce((a, b) => (b.plays > a.plays ? b : a));
   const big = g.append("text").attr("text-anchor", "middle").attr("y", -6).style("fill", "var(--ink)").style("font-size", `${Math.max(16, r0 * 0.28)}px`).style("font-weight", 650);
   const small = g.append("text").attr("text-anchor", "middle").attr("y", 16).style("fill", "var(--ink-2)").style("font-size", "12px");
   const center = c => { big.text(`${DAYS_SHORT[c.dow]} ${hh(c.hr)}`); small.text(`${fmt(c.plays)} plays · ${c.top}`); };
   center(peak);
-  paths.on("pointermove", function (event, c) {
-    paths.attr("opacity", d => (d === c ? 1 : 0.35)); d3.select(this).attr("stroke", "var(--ink)").attr("stroke-width", 1.5);
+  const show = (event, c) => {
+    paths.attr("opacity", d => (d === c ? 1 : 0.35)).attr("stroke", d => (d === c ? "var(--ink)" : null)).attr("stroke-width", 1.5);
     center(c);
     showTip(event, `<b>${DAYS[c.dow]}s, ${hh(c.hr)}–${hh((c.hr + 1) % 24)}</b>${fmt(c.plays)} plays, ${fmtH(c.hours)} hours<br>Most played: ${esc(c.top)} (${c.topPlays})`);
-  }).on("pointerleave", function () { paths.attr("opacity", 1).attr("stroke", null); center(peak); hideTip(); });
+  };
+  const clear = () => { paths.attr("opacity", 1).attr("stroke", null); center(peak); hideTip(); };
+  paths.on("pointermove", show).on("pointerleave", clear);
+  keyboardTour(svg, paths, show, clear);
   const total = d3.sum(cells, c => c.plays), night = d3.sum(cells.filter(c => c.hr < 6), c => c.plays);
   setText("clock-title", `My music peaks on ${DAYS[peak.dow]}s at ${hh(peak.hr)}; only ${pct(night / total)} of it plays between midnight and 6.`);
 }
@@ -391,7 +452,7 @@ function drawSkips() {
   const W = widthOf(root), H = heightOf(root, 420), inset = insetOf();
   const worstHour = K.hours.reduce((a, b) => (b[1] > a[1] ? b : a));
   document.getElementById("skip-chips").innerHTML = [
-    ["hi", pct1(K.overall), "of all plays skipped"], ["", pct1(K.mode.shuffle), "on shuffle"], ["", pct1(K.mode.chosen), "when I chose the order"],
+    ["", pct1(K.overall), "of all plays skipped"], ["", pct1(K.mode.shuffle), "on shuffle"], ["", pct1(K.mode.chosen), "when I chose the order"],
     ["", hh(worstHour[0]), `most impatient hour (${pct(worstHour[1])})`],
   ].map(([c, v, l]) => `<div class="${c}"><b>${v}</b>${esc(l)}</div>`).join("");
   const arts = K.artists.map(([name, rate, n]) => ({ name, rate, n }));
@@ -410,27 +471,44 @@ function drawSkips() {
   svg.append("g").selectAll("text").data(ticks).join("text").attr("x", x).attr("y", H - 8).attr("text-anchor", "middle").text(pct);
   svg.append("line").attr("x1", x(K.overall)).attr("x2", x(K.overall)).attr("y1", 0).attr("y2", H - 24).attr("stroke", "var(--ink-2)").attr("stroke-dasharray", "4 4");
   svg.append("text").attr("x", x(K.overall) + 6).attr("y", 14).style("fill", "var(--ink-2)").text(`average ${pct1(K.overall)}`);
-  svg.append("text").attr("x", inset).attr("y", 14).text("← let it play");
-  svg.append("text").attr("x", W - inset).attr("y", 14).attr("text-anchor", "end").text("skip it →");
+  svg.append("text").attr("x", inset).attr("y", 14).text("let it play");
+  svg.append("text").attr("x", W - inset).attr("y", 14).attr("text-anchor", "end").text("skip it");
   const waiting = isWaiting("skips");
   const dots = svg.append("g").selectAll("circle").data(arts).join("circle").attr("cx", a => a.x).attr("cy", a => a.y)
     .attr("r", a => (waiting ? 0 : rad(a.n))).attr("fill", a => (isTop(a.name) ? colorOf(a.name) : OTHER)).attr("fill-opacity", 0.9).attr("stroke", "#09090b");
   if (waiting) revealOnView("skips", root, () => dots.transition().delay((_, i) => i * 35).duration(600).ease(d3.easeBackOut.overshoot(1.6)).attr("r", a => rad(a.n)));
-  const placed = [], labels = svg.append("g");
-  const wanted = [...arts.slice(0, 4), ...arts.slice(-4), ...arts.filter(a => isTop(a.name))];
-  [...new Set(wanted)].sort((a, b) => b.n - a.n).forEach(a => {
-    const w = a.name.length * 7, inside = rad(a.n) * 2 > w + 6;
-    const box = { x0: a.x - w / 2, x1: a.x + w / 2, y0: inside ? a.y - 8 : a.y + rad(a.n) + 2, y1: inside ? a.y + 8 : a.y + rad(a.n) + 18 };
-    if (placed.some(p => box.x0 < p.x1 && box.x1 > p.x0 && box.y0 < p.y1 && box.y1 > p.y0)) return;
-    placed.push(box);
-    const t = labels.append("text").attr("x", a.x).attr("y", inside ? a.y + 4 : a.y + rad(a.n) + 14).attr("text-anchor", "middle").text(a.name).style("pointer-events", "none");
-    if (inside) labelOn(t, isTop(a.name) ? colorOf(a.name) : OTHER);
+  /* Labels: the extremes plus the top artists. A label outside its bubble must not cover another
+     bubble or another label; anything that would is left to the tooltip. */
+  const labels = svg.append("g").style("pointer-events", "none");
+  const wanted = [...new Set([...arts.slice(0, 3), ...arts.slice(-3), ...arts.filter(a => isTop(a.name))])].sort((a, b) => b.n - a.n);
+  /* Candidate spots per label: inside the bubble if it fits, else below, else above. */
+  const spotsFor = a => {
+    const w = a.name.length * 7, r = rad(a.n), side = { x0: a.x - w / 2, x1: a.x + w / 2 }, text = a.name;
+    if (r * 2 > w + 6) return [{ ...side, y0: a.y - 8, y1: a.y + 8, ty: a.y + 4, inside: true, text }];
+    const short = a.name.split(" ")[0], sw = short.length * 7.4;
+    const spots = [];
+    // A top artist whose full name is too long still gets its first name inside its own colour.
+    if (isTop(a.name) && r * 2 > sw + 6) spots.push({ x0: a.x - sw / 2, x1: a.x + sw / 2, y0: a.y - 8, y1: a.y + 8, ty: a.y + 4, inside: true, text: short });
+    return [...spots, { ...side, y0: a.y + r + 2, y1: a.y + r + 18, ty: a.y + r + 14, text }, { ...side, y0: a.y - r - 18, y1: a.y - r - 2, ty: a.y - r - 6, text }];
+  };
+  const coversBubble = (b, self) => arts.some(o => o !== self && o.x + rad(o.n) > b.x0 && o.x - rad(o.n) < b.x1 && o.y + rad(o.n) > b.y0 && o.y - rad(o.n) < b.y1);
+  const taken = [];
+  const free = b => !taken.some(p => b.x0 < p.x1 && b.x1 > p.x0 && b.y0 < p.y1 && b.y1 > p.y0);
+  wanted.forEach(a => {
+    const b = spotsFor(a).find(s => free(s) && (s.inside || (!coversBubble(s, a) && s.y0 > 18 && s.y1 < H - 26)));
+    if (!b) return; // left to the tooltip
+    taken.push(b);
+    const t = labels.append("text").attr("x", a.x).attr("y", b.ty).attr("text-anchor", "middle").text(b.text);
+    if (b.inside) labelOn(t, isTop(a.name) ? colorOf(a.name) : OTHER);
     else t.style("fill", "var(--ink-2)").style("font-size", "12px").attr("paint-order", "stroke").attr("stroke", "#09090b").attr("stroke-width", 3);
   });
-  dots.on("pointermove", function (event, a) {
-    dots.attr("opacity", d => (d === a ? 1 : 0.25)); d3.select(this).attr("stroke", "var(--ink)").attr("stroke-width", 2);
+  const show = (event, a) => {
+    dots.attr("opacity", d => (d === a ? 1 : 0.25)).attr("stroke", d => (d === a ? "var(--ink)" : "#09090b")).attr("stroke-width", d => (d === a ? 2 : 1));
     showTip(event, `<b>${esc(a.name)}</b>${pct1(a.rate)} skipped out of ${fmt(a.n)} plays`);
-  }).on("pointerleave", function () { dots.attr("opacity", 1).attr("stroke", "#09090b").attr("stroke-width", 1); hideTip(); });
+  };
+  const clear = () => { dots.attr("opacity", 1).attr("stroke", "#09090b").attr("stroke-width", 1); hideTip(); };
+  dots.on("pointermove", show).on("pointerleave", clear);
+  keyboardTour(svg, dots, show, clear);
   const low = arts[0], high = arts.at(-1), sameish = Math.abs(K.mode.shuffle - K.mode.chosen) < 0.01;
   setText("skip-title", sameish
     ? `Shuffle or not, I skip ${pct(K.overall)} of songs; ${low.name} almost never gets skipped.`
@@ -446,7 +524,7 @@ const travel = { view: "world" };
 function drawTravel() {
   const root = document.getElementById("travel");
   root.innerHTML = "";
-  const W = widthOf(root), H = heightOf(root, 360), inset = insetOf();
+  const W = widthOf(root), H = heightOf(root, Math.round(widthOf(root) * 0.62)), inset = insetOf(); // phones: map height follows its width
   const byId = new Map(D.travel.map(t => [t.id, t]));
   const world = window.WORLD, home = world.features.find(f => +f.id === byId.get(724)?.id);
   const visited = world.features.filter(f => byId.has(+f.id));
@@ -455,11 +533,13 @@ function drawTravel() {
   const fit = view => { projection.fitExtent([[inset, 36], [W - inset, H - 12]], view === "europe" ? europe : world); return [projection.scale(), projection.translate()]; };
   fit(travel.view);
   const path = d3.geoPath(projection);
-  const hours = d3.scaleSequentialLog(d3.interpolateRgbBasis(RAMP.slice(1))).domain(d3.extent(D.travel, t => t.hours));
+  const hours = d3.scaleSequentialLog(d3.interpolateRgbBasis(HEAT.slice(1))).domain(d3.extent(D.travel, t => t.hours));
   const width = d3.scaleSqrt().domain([0, d3.max(D.travel.filter(t => t.cc !== "ES"), t => t.hours)]).range([0.8, 7]);
   const svg = d3.select(root).append("svg").attr("width", W).attr("height", H).attr("role", "img")
     .attr("aria-label", "World map of countries where I listened, with arcs from Spain sized by hours");
-  const switcher = d3.select(root).append("div").attr("class", "view-switch").style("position", "absolute").style("top", "0").style("left", "50%").style("transform", "translateX(-50%)");
+  const bar = d3.select(root).insert("div", "svg").attr("class", "map-zoom");
+  bar.append("span").text("Zoom to");
+  const switcher = bar.append("div").attr("class", "view-switch").attr("role", "group").attr("aria-label", "Map zoom");
   ["world", "europe"].forEach(v => switcher.append("button").attr("type", "button").attr("aria-pressed", String(travel.view === v)).text(v === "world" ? "World" : "Europe")
     .on("click", () => { if (travel.view === v) return; travel.view = v; switcher.selectAll("button").attr("aria-pressed", function () { return String(this.textContent.toLowerCase() === v); }); flyTo(v); }));
   const sphere = svg.append("path").datum({ type: "Sphere" }).attr("fill", "#0e0e12").attr("stroke", "#1b1b20");
@@ -470,9 +550,9 @@ function drawTravel() {
     const f = world.features.find(g => +g.id === t.id), dest = d3.geoCentroid(f), interp = d3.geoInterpolate(origin, dest);
     return { t, dest, line: { type: "LineString", coordinates: d3.range(0, 1.0001, 1 / 48).map(interp) } };
   });
-  const arcs = svg.append("g").selectAll("path").data(trips).join("path").attr("fill", "none").attr("stroke", ACCENT).attr("stroke-opacity", 0.75)
+  const arcs = svg.append("g").selectAll("path").data(trips).join("path").attr("fill", "none").attr("stroke", NEUTRAL_HI).attr("stroke-opacity", 0.7)
     .attr("stroke-width", d => width(d.t.hours)).attr("stroke-linecap", "round").style("pointer-events", "none");
-  const pins = svg.append("g").selectAll("circle").data(trips).join("circle").attr("r", d => 2 + width(d.t.hours) * 0.6).attr("fill", ACCENT).style("pointer-events", "none");
+  const pins = svg.append("g").selectAll("circle").data(trips).join("circle").attr("r", d => 2 + width(d.t.hours) * 0.6).attr("fill", NEUTRAL_HI).style("pointer-events", "none");
   const homePin = svg.append("circle").attr("r", 5).attr("fill", "var(--ink)").attr("class", "halo");
   const labels = svg.append("g").style("pointer-events", "none");
   const labelled = D.travel.slice(0, isPhone() ? 4 : 10);
@@ -484,7 +564,9 @@ function drawTravel() {
     const placed = [];
     const shown = labelled.map(t => {
       const [px, py] = projection(d3.geoCentroid(world.features.find(g => +g.id === t.id)));
-      return { t, px: px + 8, py: py - 8, w: (t.name.length + 8) * 6.6 };
+      const w = (t.name.length + 8) * 6.6;
+      // Spain is where every arc starts, so its label sits below-left of the origin pin.
+      return t.cc === "ES" ? { t, px: px - w - 6, py: py + 20, w } : { t, px: px + 8, py: py - 8, w };
     }).filter(l => {
       const hit = l.px < 0 || l.px + l.w > W || l.py < 30 || l.py > H || placed.some(p => l.px < p.px + p.w && l.px + l.w > p.px && Math.abs(l.py - p.py) < 16);
       if (!hit) placed.push(l);
@@ -509,12 +591,18 @@ function drawTravel() {
       pins.transition().delay((_, i) => i * 90 + 1000).duration(300).attr("opacity", 1);
     });
   }
-  lands.on("pointermove", function (event, f) {
+  const show = (event, f, node) => {
     const t = byId.get(+f.id);
     if (!t) { hideTip(); return; }
-    d3.select(this).attr("stroke", "var(--ink)").attr("stroke-width", 1.2).raise();
+    lands.attr("stroke", "#09090b").attr("stroke-width", 0.5);
+    d3.select(node).attr("stroke", "var(--ink)").attr("stroke-width", 1.2).raise();
     showTip(event, `<b>${esc(t.name)}</b>${fmtH(t.hours)} hours, ${fmt(t.plays)} plays<br>Top artist: ${esc(t.topArtist)}<br><span class="k">Top song: ${esc(t.topTrack)} (${esc(t.topTrackArtist)})</span>`);
-  }).on("pointerleave", function () { d3.select(this).attr("stroke", "#09090b").attr("stroke-width", 0.5); hideTip(); });
+  };
+  const clear = () => { lands.attr("stroke", "#09090b").attr("stroke-width", 0.5); hideTip(); };
+  lands.on("pointermove", function (event, f) { show(event, f, this); }).on("pointerleave", clear);
+  /* Keyboard order follows hours, biggest first, the same order as the labels. */
+  const order = new Map(D.travel.map((t, i) => [t.id, i]));
+  keyboardTour(svg, lands.filter(f => byId.has(+f.id)).sort((a, b) => order.get(+a.id) - order.get(+b.id)), show, clear);
   const total = d3.sum(D.travel, t => t.hours), abroad = total - (byId.get(724)?.hours ?? 0);
   const second = D.travel[1];
   setText("travel-title", `${pct(abroad / total)} of my listening happened outside Spain, across ${D.travel.length - 1} countries; ${second.name} comes second with ${fmtH(second.hours)} hours.`);
@@ -534,12 +622,16 @@ function drawDiscovery() {
     .attr("aria-label", "Monthly new artists as bars above a centre line, and share of plays from long-known artists as an area below it");
   yearTicks(svg, xt, H, inset);
   const waiting = isWaiting("discovery");
+  /* The export ends mid-month, so the last month is partial: drawn faded and said in the tooltip. */
+  const lastDay = parseDay(D.meta.lastDay), lastIndex = MONTHS.length - 1;
+  const partial = i => i === lastIndex && lastDay.getDate() < d3.timeDay.count(MONTHS[i], d3.timeMonth.offset(MONTHS[i], 1));
   const bars = svg.append("g").selectAll("rect").data(V.newArtists).join("rect").attr("x", (_, i) => x(i)).attr("width", x.bandwidth()).attr("rx", Math.min(3, x.bandwidth() / 2))
-    .attr("fill", ACCENT).attr("y", v => (waiting ? mid : mid - up(v))).attr("height", v => (waiting ? 0 : up(v)));
+    .attr("fill", NEUTRAL_HI).attr("fill-opacity", (_, i) => (partial(i) ? 0.35 : 1))
+    .attr("y", v => (waiting ? mid : mid - up(v))).attr("height", v => (waiting ? 0 : up(v)));
   const share = V.oldShare.map(v => v ?? 0);
   const area = d3.area().x((_, i) => x(i) + x.bandwidth() / 2).y0(mid + 3).y1(v => mid + 3 + down(v)).curve(d3.curveMonotoneX);
   const clip = wipeClip(svg, "discovery-area", root, W, H);
-  svg.append("path").datum(share).attr("d", area).attr("fill", SECOND).attr("fill-opacity", 0.35).attr("stroke", SECOND).attr("stroke-width", 1.5).attr("clip-path", clip);
+  svg.append("path").datum(share).attr("d", area).attr("fill", NEUTRAL_LO).attr("fill-opacity", 0.3).attr("stroke", NEUTRAL_LO).attr("stroke-width", 1.5).attr("clip-path", clip);
   svg.append("line").attr("x1", 0).attr("x2", W).attr("y1", mid + 1.5).attr("y2", mid + 1.5).attr("stroke", "var(--axis)");
   if (waiting) revealOnView("discovery", root, () => bars.transition().delay((_, i) => i * 14).duration(700).ease(d3.easeCubicOut).attr("y", v => mid - up(v)).attr("height", v => up(v)));
   down.ticks(2).filter(v => v > 0).forEach(v => {
@@ -551,27 +643,50 @@ function drawDiscovery() {
   svg.append("text").attr("x", Math.min(W - inset, Math.max(inset, x(best) + x.bandwidth() / 2))).attr("y", mid - up(V.newArtists[best]) - 8)
     .attr("text-anchor", x(best) > W - 160 ? "end" : "middle").style("fill", "var(--ink)").style("font-weight", 600).text(`${V.newArtists[best]} new in ${monthName(MONTHS[best])}`);
   const hit = svg.append("g").selectAll("rect").data(MONTHS).join("rect").attr("x", (_, i) => x(i) - x.step() * x.paddingInner() / 2).attr("width", x.step()).attr("y", 0).attr("height", H - 24).attr("fill", "transparent");
-  hit.on("pointermove", (event, m) => {
+  const show = (event, m) => {
     const i = MONTHS.indexOf(m);
     bars.attr("opacity", (_, j) => (j === i ? 1 : 0.35));
-    showTip(event, `<b>${monthName(m)}</b>${V.newArtists[i]} artists heard for the first time<br>${V.oldShare[i] == null ? "No plays" : `${pct(V.oldShare[i])} of ${fmt(V.plays[i])} plays went to artists known for over a year`}`);
-  }).on("pointerleave", () => { bars.attr("opacity", 1); hideTip(); });
-  setLegend("disc-legend", [["New artists that month (up)", ACCENT], [`Share of plays from artists known over ${V.oldFriendDays} days (down)`, SECOND]]);
+    showTip(event, `<b>${monthName(m)}${partial(i) ? ` (to ${longDay(lastDay)})` : ""}</b>${V.newArtists[i]} artists heard for the first time<br>${V.oldShare[i] == null ? "No plays" : `${pct(V.oldShare[i])} of ${fmt(V.plays[i])} plays went to artists known for over a year`}`);
+  };
+  const clear = () => { bars.attr("opacity", 1); hideTip(); };
+  hit.on("pointermove", show).on("pointerleave", clear);
+  keyboardTour(svg, hit, show, clear);
+  setLegend("disc-legend", [["New artists that month (up)", NEUTRAL_HI], [`Share of plays from artists known over ${V.oldFriendDays} days (down)`, NEUTRAL_LO]]);
   const total = d3.sum(V.newArtists);
   setText("disc-title", `I met ${fmt(total)} new artists since ${MONTHS[0].getFullYear()}; ${monthName(MONTHS[best])} alone brought ${V.newArtists[best]}.`);
   setText("disc-sub", "Bars rise with the artists I played for the very first time each month. The area below grows when I went back to artists I had known for over a year: explorer months push up, comfort months pull down.");
 }
 
-/* ================= Method ================= */
-function drawMethod() {
-  const m = D.meta;
+/* ================= Ending ================= */
+function drawEnding() {
+  const m = D.meta, binge = D.obsessions[0];
+  setText("end-title", `${fmt(m.plays)} plays, ${fmt(m.artists)} artists, ${D.travel.length} countries, and one song ${binge.peak} times in a week.`);
   setText("method-note", `${fmt(m.plays)} music plays, ${fmt(m.artists)} artists and ${fmt(m.tracks)} songs, ${longDay(FIRST_DAY)} to ${longDay(parseDay(m.lastDay))}. ` +
     "Earlier logs exist but are sparse, so the story starts in May 2021. Hours are time actually played; podcasts and video are left out. " +
-    "Artist first plays use the full history back to 2014, so 2021's discovery numbers are slightly inflated.");
+    "Artist first plays use the full history back to 2014, so 2021's discovery numbers are slightly inflated. " +
+    "Only aggregates are published: no raw plays, no IP addresses, no exact timestamps.");
+  document.getElementById("to-start").addEventListener("click", () => {
+    document.getElementById("s-hero").scrollIntoView({ behavior: REDUCED ? "auto" : "smooth" });
+  });
+}
+
+/* Thin bar under the banner that fills as the story is read. */
+function trackProgress() {
+  const fill = document.getElementById("progress");
+  let queued = false;
+  const update = () => {
+    queued = false;
+    const room = document.documentElement.scrollHeight - innerHeight;
+    fill.style.transform = `scaleX(${room > 0 ? Math.min(1, scrollY / room) : 0})`;
+  };
+  addEventListener("scroll", () => { if (!queued) { queued = true; requestAnimationFrame(update); } }, { passive: true });
+  addEventListener("resize", update);
+  update();
 }
 
 const drawCharts = () => { drawRiver(); drawRace(); drawObsessions(); drawSpotlight(); drawClock(); drawSkips(); drawTravel(); drawDiscovery(); };
 drawHero();
-drawMethod();
+drawEnding();
+trackProgress();
 drawAll(drawCharts);
 redrawOnResize(drawCharts);

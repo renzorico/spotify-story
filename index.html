@@ -11,23 +11,23 @@
 <link rel="stylesheet" href="theme.css">
 </head>
 <body>
-<div class="banner" id="banner"><span class="note"><b>Five years listening.</b> My Spotify history, 2021 to 2026. Aggregates only: no raw plays, no IP addresses, no exact timestamps.</span></div>
+<div class="banner" id="banner"><span class="note"><b>Five years listening.</b> My Spotify history, 2021 to 2026.</span><span class="progress" aria-hidden="true"><span id="progress"></span></span></div>
+<noscript><p class="noscript">This story draws its charts with JavaScript. Turn it on to see them.</p></noscript>
 <main>
 
 <section class="screen hero" id="s-hero">
   <canvas id="hero-eq" aria-hidden="true"></canvas>
-  <p class="eyebrow">Spotify streaming history · <b id="hero-range"></b></p>
   <div>
     <h1 id="hero-title"></h1>
     <p class="lede" id="hero-lede"></p>
   </div>
   <div class="stats" id="stats"></div>
-  <p class="scroll-cue">Scroll <span>↓</span></p>
+  <p class="scroll-cue">Scroll <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></p>
 </section>
 
 <section class="screen" id="s-river">
   <div class="wrap"><div class="head"><h2 id="river-title"></h2>
-    <p class="sub">Each band is one of my seven most played artists, and its thickness is the hours I gave it that month. Bands swell and vanish: those are eras. Hover a band for the month.</p></div></div>
+    <p class="sub">Each band is one of my seven most played artists, and its thickness is the hours I gave it that month. Bands swell and vanish: those are eras. Hover a band, or tab to the chart and use the arrow keys.</p></div></div>
   <div class="wrap"><ul class="legend" id="river-legend"></ul></div>
   <div id="river" class="fill"></div>
 </section>
@@ -36,7 +36,7 @@
   <div class="wrap"><div class="head"><h2 id="race-title"></h2>
     <p class="sub">Cumulative hours per artist, month by month. It plays when it comes into view; pause it or drag the slider to any month.</p></div></div>
   <div class="wrap player">
-    <button id="race-play" type="button" aria-label="Pause race" aria-pressed="true">❚❚</button>
+    <button id="race-play" type="button" aria-label="Pause race" aria-pressed="true"></button>
     <input id="race-scrub" type="range" min="0" step="0.01" value="0" aria-label="Race month">
     <output id="race-label" for="race-scrub"></output>
   </div>
@@ -59,7 +59,7 @@
 
 <section class="screen" id="s-clock">
   <div class="wrap"><div class="head"><h2 id="clock-title"></h2>
-    <p class="sub">A week as a clock: the angle is the hour, each ring is a weekday from Monday inside to Sunday outside, and brighter means more plays. Hover a cell to see who owned that hour.</p></div></div>
+    <p class="sub">A week as a clock: the angle is the hour, each ring is a weekday from Monday inside to Sunday outside, and brighter means more plays. Hover a cell, or use the arrow keys, to see who owned that hour.</p></div></div>
   <div id="clock" class="fill"></div>
 </section>
 
@@ -73,7 +73,7 @@
 
 <section class="screen" id="s-travel">
   <div class="wrap"><div class="head"><h2 id="travel-title"></h2>
-    <p class="sub">Every arc leaves Spain for a country where I pressed play, and thicker means more hours there. Hover a country for its hours and what I played most in it.</p></div></div>
+    <p class="sub">Every arc leaves Spain for a country where I pressed play, and thicker means more hours there. Hover a country, or use the arrow keys, for its hours and what I played most there.</p></div></div>
   <div id="travel" class="fill"></div>
 </section>
 
@@ -84,17 +84,23 @@
   <div id="discovery" class="fill"></div>
 </section>
 
-<section class="screen" id="s-method">
-  <div class="wrap"><div class="head"><h2>How it was made.</h2>
-    <p class="sub">Spotify sends a full listening log on request; a Python script turns it into the aggregates on this page and nothing else. Every chart is drawn in the browser from that one small file, with no network calls.</p></div></div>
+<section class="screen ending" id="s-method">
+  <div class="wrap"><div class="head"><h2 id="end-title"></h2>
+    <p class="sub">I'm Renzo, a data scientist who teaches data analytics. Everything above comes from my own Spotify export, processed on my laptop and turned into one finding per screen.</p></div></div>
+  <div class="wrap"><nav class="contact" aria-label="Contact and source">
+    <a href="https://www.linkedin.com/in/renzorico" rel="noopener">LinkedIn</a>
+    <a href="https://github.com/renzorico" rel="noopener">GitHub</a>
+    <a href="https://github.com/renzorico/spotify-story" rel="noopener">This page's code</a>
+    <button type="button" id="to-start" class="quiet">Back to the start</button>
+  </nav></div>
   <div class="wrap rail">
-    <ol class="pipeline">
-      <li><b>Request</b>Extended streaming history from Spotify's privacy page.</li>
-      <li><b>Load</b>JSON logs into DuckDB, music only, 2021 to 2026.</li>
+    <ol class="pipeline compact">
+      <li><b>Request</b>Extended streaming history from Spotify.</li>
+      <li><b>Load</b>JSON into DuckDB, music only, 2021 to 2026.</li>
       <li><b>Clean</b>UTC to Madrid time; IP addresses dropped.</li>
       <li><b>Define</b>A skip is a play under 30 seconds.</li>
       <li><b>Aggregate</b>By month, week, hour, artist and country.</li>
-      <li><b>Render</b>D3 in the browser, from one 84 KB file.</li>
+      <li><b>Render</b>D3 in the browser, no network calls.</li>
     </ol>
   </div>
   <div class="wrap"><div class="endnote"><p id="method-note"></p><footer>Personal data, my own account. Built with Claude Code.</footer></div></div>

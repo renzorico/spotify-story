@@ -8,7 +8,6 @@
 }
 
 .banner b { color: var(--accent); }
-.eyebrow b { color: var(--accent); font-weight: 400; }
 #tip b { color: var(--ink); }
 #tip .k { color: var(--muted); }
 #tip .bar { height: 4px; border-radius: 2px; background: var(--accent); margin-top: 6px; }
@@ -21,12 +20,12 @@
   background: linear-gradient(90deg, var(--page) 0%, rgba(9,9,11,.88) 38%, rgba(9,9,11,.35) 75%, rgba(9,9,11,.2) 100%); }
 .hero h1 .num { color: var(--accent); }
 .scroll-cue { margin-top: 32px; font-size: 13px; color: var(--muted); letter-spacing: .14em; text-transform: uppercase; }
-.scroll-cue span { display: inline-block; animation: nudge 1.8s ease-in-out infinite; }
+.scroll-cue svg { display: inline-block; vertical-align: -2px; margin-left: 4px; animation: nudge 1.8s ease-in-out infinite; }
 @keyframes nudge { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(5px); } }
 
 /* ---------- Controls ---------- */
 .player { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 12px 16px; font-size: 13px; color: var(--muted); }
-.player button { all: unset; cursor: pointer; display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 999px; background: var(--accent); color: var(--on-neon); font-size: 14px; }
+.player button { all: unset; cursor: pointer; display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 999px; background: var(--accent); color: var(--on-neon); font-size: 14px; }
 .player button:focus-visible, .legend button:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .player input[type=range] { width: min(420px, 60vw); accent-color: var(--accent); }
 .player output { min-width: 72px; color: var(--ink); font-variant-numeric: tabular-nums; }
@@ -34,11 +33,65 @@
 /* ---------- Strip of stat chips above a chart ---------- */
 .chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 32px; font-size: 13px; color: var(--muted); }
 .chips b { display: block; font-size: 24px; line-height: 1.1; color: var(--ink); font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
-.chips .hi b { color: var(--accent); }
 
 /* Race month watermark */
 .race-month { font-size: clamp(48px, 9vw, 120px); font-weight: 700; letter-spacing: -.04em; fill: #1b1b20 !important; }
 
 .year .swatch { background: var(--accent); }
 
-@media (prefers-reduced-motion: reduce) { .scroll-cue span { animation: none; } }
+
+
+/* ---------- Browser surfaces ---------- */
+html { scrollbar-color: var(--axis) var(--page); caret-color: var(--accent); }
+::selection { background: var(--accent); color: var(--on-neon); }
+svg[tabindex]:focus { outline: none; }
+svg[tabindex]:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; border-radius: 4px; }
+details.how summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 4px; color: var(--ink); }
+.stat span { color: var(--ink-2); }
+.noscript { margin: 0; padding: 12px var(--gutter); color: var(--ink-2); background: var(--raised); }
+
+/* ---------- Reading progress ---------- */
+.progress { position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 6; pointer-events: none; }
+#progress { display: block; height: 100%; background: var(--accent); transform: scaleX(0); transform-origin: left; }
+
+/* ---------- Map zoom control ---------- */
+.map-zoom { position: absolute; top: 0; left: 50%; transform: translateX(-50%); z-index: 2; display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+
+/* ---------- Canserbero year strip: the finding lives here ---------- */
+#spot-years .big { font-size: clamp(26px, 3vw, 38px); }
+#spot-years .swatch { height: 8px; }
+
+/* ---------- Ending ---------- */
+.contact { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
+.contact a, .contact button { display: inline-flex; align-items: center; min-height: 40px; padding: 0 18px; border-radius: 999px; font: inherit; font-size: 15px; font-weight: 600; text-decoration: none; cursor: pointer; }
+.contact a { background: var(--accent); color: var(--on-neon); }
+.contact a:hover { background: #c8ff5a; }
+.contact .quiet { background: transparent; color: var(--ink); border: 1px solid var(--axis); }
+.contact .quiet:hover { border-color: var(--muted); }
+.contact a:focus-visible, .contact button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.ending .rail { flex: 0 0 auto; }
+.pipeline.compact li { font-size: 13px; padding-top: 24px; }
+.pipeline.compact li::before { width: 24px; height: 24px; top: -12px; font-size: 11px; }
+
+/* ---------- Touch: 44px targets ---------- */
+@media (pointer: coarse) {
+  .legend button, .view-switch button { min-height: 44px; box-sizing: border-box; }
+  .view-switch button { display: inline-flex; align-items: center; }
+  .player button { width: 44px; height: 44px; }
+  .player input[type=range] { height: 44px; }
+  .contact a, .contact button { min-height: 44px; }
+}
+
+/* ---------- Phones ---------- */
+@media (max-width: 600px) {
+  .banner .note { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub, details.how p { text-align: left; hyphens: manual; }
+  #hero-eq { opacity: .3; }
+  .years { grid-auto-flow: row; grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 16px; overflow: visible; }
+  .year { border-right: 1px solid var(--axis); padding: 0 12px; }
+  .year:nth-child(3n) { border-right: 0; }
+  .year:nth-child(3n + 1) { padding-left: 0; }
+  .map-zoom { position: static; transform: none; justify-content: center; margin-bottom: 8px; }
+}
+@media (prefers-reduced-motion: reduce) { .scroll-cue svg { animation: none; } }
+@media (min-width: 900px) and (min-height: 640px) { .ending { justify-content: center; } }
