@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
 <title>Five years listening</title>
-<meta name="description" content="A scroll story of five and a half years of my Spotify listening, 2021 to 2026: artists, obsessions, habits, skips, travel and discovery.">
+<meta name="description" content="A scroll story of five and a half years of my Spotify listening, 2021 to 2026: artists, songs with a story, genres, seasons, travel and discovery.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%2309090b'/%3E%3Crect x='3' y='7' width='2' height='6' fill='%23b4f03c'/%3E%3Crect x='7' y='3' width='2' height='10' fill='%23b4f03c'/%3E%3Crect x='11' y='5' width='2' height='8' fill='%23b4f03c'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="tokens.css">
-<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="tokens.css?v=12">
+<link rel="stylesheet" href="theme.css?v=12">
 </head>
 <body>
 <div class="banner" id="banner"><span class="note"><b>Five years listening.</b> My Spotify history, 2021 to 2026.</span><span class="progress" aria-hidden="true"><span id="progress"></span></span></div>
@@ -16,7 +16,8 @@
 <main>
 
 <section class="screen hero" id="s-hero">
-  <canvas id="hero-eq" aria-hidden="true"></canvas>
+  <canvas id="hero-swarm" aria-hidden="true"></canvas>
+  <div id="hero-number" aria-hidden="true"></div>
   <div>
     <h1 id="hero-title"></h1>
     <p class="lede" id="hero-lede"></p>
@@ -39,59 +40,61 @@
     <button id="race-play" type="button" aria-label="Pause race" aria-pressed="true"></button>
     <input id="race-scrub" type="range" min="0" step="0.01" value="0" aria-label="Race month">
     <output id="race-label" for="race-scrub"></output>
+    <div class="view-switch" id="race-speed" role="group" aria-label="Race speed">
+      <button type="button" data-speed="0.5" aria-pressed="false">0.5x</button><button type="button" data-speed="1" aria-pressed="true">1x</button><button type="button" data-speed="2" aria-pressed="false">2x</button><button type="button" data-speed="4" aria-pressed="false">4x</button>
+    </div>
     <span id="race-note" class="race-note" aria-live="polite"></span>
   </div>
   <div id="race" class="fill"></div>
 </section>
 
-<section class="screen" id="s-obsessions">
-  <div class="wrap"><div class="head"><h2 id="obs-title"></h2>
-    <p class="sub">Every row is one song and every spike is one week of plays, all on the same timeline. The tall thin spikes are binges: a song on repeat for a week, then mostly gone.</p></div></div>
-  <div id="obsessions" class="fill"></div>
+<section class="screen" id="s-stories">
+  <div class="wrap"><div class="head"><h2 id="story-title"></h2>
+    <p class="sub">Ten songs by ten different artists, each picked by the data for the one thing that makes it odd. Every dot is a day I played it, bigger for more plays. Hover a dot, or tab to the chart and use the arrow keys.</p></div></div>
+  <div id="stories" class="fill"></div>
 </section>
 
-<section class="screen" id="s-spotlight">
-  <div class="wrap"><div class="head"><h2 id="spot-title"></h2>
-    <p class="sub" id="spot-sub"></p></div></div>
-  <div class="wrap"><div class="years" id="spot-years"></div></div>
-  <div class="wrap"><ul class="legend" id="spot-legend"></ul></div>
-  <div id="spotlight" class="fill"></div>
+<section class="screen" id="s-rank">
+  <div class="wrap"><div class="head"><h2 id="rank-title"></h2>
+    <p class="sub" id="rank-sub"></p></div></div>
+  <div class="wrap"><div class="years" id="rank-years"></div></div>
+  <div id="rank" class="fill"></div>
 </section>
 
-<section class="screen" id="s-clock">
-  <div class="wrap"><div class="head"><h2 id="clock-title"></h2>
-    <p class="sub">A week as a clock: the angle is the hour, each ring is a weekday from Monday inside to Sunday outside, and brighter means more plays. Hover a cell, or use the arrow keys, to see who owned that hour.</p></div></div>
-  <div id="clock" class="fill"></div>
+<section class="screen" id="s-genres">
+  <div class="wrap"><div class="head"><h2 id="genre-title"></h2>
+    <p class="sub" id="genre-sub"></p>
+    <details class="how"><summary>How is this made?</summary><p id="genre-how"></p></details></div></div>
+  <div class="wrap genre-bar"><div class="view-switch" id="genre-years" role="group" aria-label="Year"></div></div>
+  <div class="wrap"><ul class="legend" id="genre-legend"></ul></div>
+  <div id="genres" class="fill"></div>
 </section>
 
-<section class="screen" id="s-skips">
-  <div class="wrap"><div class="head"><h2 id="skip-title"></h2>
-    <p class="sub" id="skip-sub"></p>
-    <details class="how"><summary>How is this made?</summary><p id="skip-how"></p></details></div></div>
-  <div class="wrap chips" id="skip-chips"></div>
-  <div id="skips" class="fill"></div>
+<section class="screen" id="s-seasons">
+  <div class="wrap"><div class="head"><h2 id="season-title"></h2>
+    <p class="sub">The year as a clock, January at the top. Each dot is a song I played in at least two different years, placed at the time of year it peaks; the further out, the more its plays crowd into that one season. Hover a dot for the song.</p></div></div>
+  <div class="wrap"><ul class="legend" id="season-legend"></ul></div>
+  <div id="seasons" class="fill"></div>
 </section>
 
 <section class="screen" id="s-travel">
   <div class="wrap"><div class="head"><h2 id="travel-title"></h2>
-    <p class="sub">Every arc leaves Spain for a country where I pressed play, and thicker means more hours there. Hover a country, or use the arrow keys, for its hours and what I played most there.</p></div></div>
+    <p class="sub">Every arc leaves Spain for a country where I pressed play; brighter and thicker means more hours. Click a country for its top artists and songs. Drag to pan, and zoom with the buttons, a pinch or Ctrl and the scroll wheel.</p></div></div>
   <div id="travel" class="fill"></div>
 </section>
 
-<section class="screen" id="s-discovery">
-  <div class="wrap"><div class="head"><h2 id="disc-title"></h2>
-    <p class="sub" id="disc-sub"></p></div></div>
-  <div class="wrap"><ul class="legend" id="disc-legend"></ul></div>
-  <div id="discovery" class="fill"></div>
+<section class="screen" id="s-cohorts">
+  <div class="wrap"><div class="head"><h2 id="cohort-title"></h2>
+    <p class="sub" id="cohort-sub"></p></div></div>
+  <div class="wrap"><ul class="legend" id="cohort-legend"></ul></div>
+  <div id="cohorts" class="fill"></div>
 </section>
 
 <section class="screen ending" id="s-method">
   <div class="wrap"><div class="head"><h2 id="end-title"></h2>
-    <p class="lede end-intro">I'm Renzo, a data scientist who teaches data analytics. Everything above comes from my own Spotify export, processed on my laptop and turned into one finding per screen.</p></div></div>
-  <div class="wrap"><nav class="contact" aria-label="Contact and source">
-    <a href="https://www.linkedin.com/in/renzorico" rel="noopener">LinkedIn</a>
-    <a href="https://github.com/renzorico" rel="noopener">GitHub</a>
-    <a href="https://github.com/renzorico/spotify-story" rel="noopener">This page's code</a>
+    <p class="lede end-intro">I'm Renzo, a data scientist based in Barcelona. Everything above comes from my own Spotify export, processed on my laptop and turned into one finding per screen.</p></div></div>
+  <div class="wrap"><nav class="contact" aria-label="Contact">
+    <a href="https://www.linkedin.com/in/renzorico" rel="noopener">Find me on LinkedIn</a>
     <button type="button" id="to-start" class="quiet">Back to the start</button>
   </nav></div>
   <div class="wrap"><details class="how pipeline-box"><summary>How it was made, in six steps</summary>
@@ -99,21 +102,21 @@
       <li><b>Request</b>Extended streaming history from Spotify.</li>
       <li><b>Load</b>JSON into DuckDB, music only, 2021 to 2026.</li>
       <li><b>Clean</b>UTC to Madrid time; IP addresses dropped.</li>
-      <li><b>Define</b>A skip is a play under 30 seconds.</li>
-      <li><b>Aggregate</b>By month, week, hour, artist and country.</li>
+      <li><b>Tag</b>Genres by hand for my top 150 artists.</li>
+      <li><b>Aggregate</b>By month, day, artist, genre and country.</li>
       <li><b>Render</b>D3 in the browser, no network calls.</li>
     </ol>
   </details></div>
-  <div class="wrap"><div class="endnote"><p id="method-note"></p><footer>Personal data, my own account. Built with Claude Code.</footer></div></div>
+  <div class="wrap"><div class="endnote"><p id="method-note"></p><footer>Personal data, my own account.</footer></div></div>
 </section>
 
 </main>
 <div id="tip" role="status"></div>
 
-<script src="d3.min.js"></script>
-<script src="data.js"></script>
-<script src="world.js"></script>
-<script src="helpers.js"></script>
-<script src="app.js"></script>
+<script src="d3.min.js?v=12"></script>
+<script src="data.js?v=12"></script>
+<script src="world.js?v=12"></script>
+<script src="helpers.js?v=12"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>

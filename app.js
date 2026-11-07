@@ -5,16 +5,17 @@
 const D = window.DATA;
 const SLOTS = ["#b4f03c", "#ff4fa0", "#2ec5ff", "#ffb22e", "#9b7bff", "#ff6a3d", "#3fe0b0"];
 const OTHER = "#5c5b64";
-const OTHER_LIGHT = "#9a99a6"; // non-top artists where a mark must stay visible on black
-const ACCENT = SLOTS[0]; // lime: Canserbero and the page chrome, nothing else
-/* Charts that are not about one artist use neutrals, so colour never implies an artist link. */
-const HEAT = ["#141418", "#26262d", "#4d4c56", "#9a99a6", "#f3f2ee"];
-const NEUTRAL_HI = "#e6e5df";
-const NEUTRAL_LO = "#8b8a94";
+const ACCENT = SLOTS[0]; // lime: Canserbero and the page chrome
+/* Three more artist colours, only for race bars 8 to 10, which outlast the seven river artists. */
+const RACE_EXTRA = ["#f9f871", "#4f7dff", "#ff9ec7"];
+/* Genres reuse the slots in order; the biggest artist of each genre already wears that colour. */
+const GENRE_COLORS = SLOTS;
+/* Cohorts run in year order, cool to warm, with artists known before 2021 in grey. */
+const COHORT_COLORS = ["#6d6c78", "#9b7bff", "#2ec5ff", "#3fe0b0", "#b4f03c", "#ffb22e", "#ff4fa0"];
+/* Map: hours from few (deep violet) to many (pale yellow). */
+const MAP_RAMP = ["#2b2158", "#6a3fd6", "#c34fd6", "#ff4fa0", "#ff9b3d", "#f9f871"];
 const HALO = "rgba(0,0,0,.6)";
 const ON_NEON = "#09090b";
-const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-const DAYS_SHORT = DAYS.map(d => d.slice(0, 3));
 
 const fmt = d3.format(",");
 const pct = d3.format(".0%");
@@ -25,12 +26,17 @@ const monthName = d3.timeFormat("%b %Y");
 const longDay = d3.timeFormat("%-d %b %Y");
 const MONTHS = D.months.map(parseDay);
 const FIRST_DAY = parseDay(D.meta.firstDay);
-const FIRST_WEEK = parseDay(D.firstWeek);
+const LAST_DAY = parseDay(D.meta.lastDay);
 const DAY_MS = 864e5;
-const hh = h => `${String(h).padStart(2, "0")}:00`;
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const colorOf = name => { const i = D.artists.indexOf(name); return i >= 0 ? SLOTS[i] : OTHER; };
-const isTop = name => D.artists.includes(name);
+const colorOf = name => {
+  const i = D.artists.indexOf(name);
+  if (i >= 0) return SLOTS[i];
+  const j = D.race.names.indexOf(name) - D.artists.length;
+  return j >= 0 && j < RACE_EXTRA.length ? RACE_EXTRA[j] : OTHER;
+};
+const genreColor = g => (g >= 0 ? GENRE_COLORS[g] : OTHER);
+const monthFull = doy => d3.timeFormat("%B")(new Date(2021, 0, Math.round(doy)));
 const setText = (id, text) => { document.getElementById(id).textContent = text; };
 /* Headlines: plain text, with the one key number wrapped so it carries the accent, as in the hero.
    Usage: headline("id")`text ${N(number)} text`; only values wrapped in N() are highlighted. */
@@ -97,10 +103,10 @@ function placeWithoutOverlap(items, boxOf) {
 
 /* ================= Hero ================= */
 function drawHero() {
-  const m = D.meta;
-  document.getElementById("hero-title").innerHTML = `<span class="num">${fmt(Math.round(m.hours))}</span> hours of music.`;
-  setText("hero-lede", `Between ${longDay(FIRST_DAY)} and ${longDay(parseDay(m.lastDay))} I played ${Math.round(m.hours / 24)} full days and nights of sound. ` +
-    `I pressed play ${fmt(m.plays)} times, and music played on ${pct(m.activeDays / m.spanDays)} of those days.`);
+  const m = D.meta, total = Math.round(m.hours);
+  document.getElementById("hero-title").innerHTML = `<span class="sr-only">${fmt(total)} </span>hours of music.`;
+  setText("hero-lede", `Every dot above is one hour, coloured by my seven most played artists. Between ${longDay(FIRST_DAY)} and ${longDay(LAST_DAY)} ` +
+    `I pressed play ${fmt(m.plays)} times, ${Math.round(m.hours / 24)} full days and nights of sound.`);
   const stats = [[m.plays, "plays"], [m.artists, "artists"], [m.tracks, "different songs"], [m.topDay.hours, `hours on my biggest day, ${longDay(parseDay(m.topDay.date))}`]];
   const box = document.getElementById("stats");
   box.innerHTML = stats.map(([, label]) => `<div class="stat"><b>0</b><span>${esc(label)}</span></div>`).join("");
@@ -108,46 +114,107 @@ function drawHero() {
     const [value] = stats[i];
     const show = v => { el.textContent = Number.isInteger(value) ? fmt(Math.round(v)) : d3.format(".1f")(v); };
     if (REDUCED) { show(value); return; }
-    d3.select(el).transition().delay(200 + i * 120).duration(1600).ease(d3.easeCubicOut)
+    d3.select(el).transition().delay(1400 + i * 120).duration(1600).ease(d3.easeCubicOut)
       .tween("count", () => { const f = d3.interpolateNumber(0, value); return t => show(f(t)); });
   });
-  startEqualizer();
+  heroSwarm(total);
 }
 
-/* Background equalizer: one bar per week of listening, breathing while the hero is visible. */
-function startEqualizer() {
-  const canvas = document.getElementById("hero-eq");
+/* One particle per hour of music. They fly in from everywhere, settle into the headline number,
+   shy away from the pointer, and scatter as the visitor scrolls on. */
+const SWARM = { spring: 0.022, damping: 0.86, pushRadius: 90, push: 2.4, scatter: 1.1, otherColor: "#e6e5df" };
+function heroSwarm(total) {
+  const hero = document.getElementById("s-hero"), canvas = document.getElementById("hero-swarm"), box = document.getElementById("hero-number");
   const ctx = canvas.getContext("2d");
-  const weeks = d3.range(0, D.daily.length, 7).map(i => d3.sum(D.daily.slice(i, i + 7)));
-  const peak = d3.max(weeks);
-  let visible = true, frame = 0;
-  new IntersectionObserver(e => { visible = e[0].isIntersecting; if (visible && !REDUCED) loop(); }).observe(canvas);
-  function paint(t) {
-    const dpr = devicePixelRatio || 1, W = canvas.clientWidth, H = canvas.clientHeight;
-    if (canvas.width !== Math.round(W * dpr)) { canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr); }
+  /* Colours: each top artist gets as many particles as hours; everyone else is ink. Shuffled so colour is confetti, not stripes. */
+  const colors = [];
+  D.artists.forEach((_, k) => { for (let i = 0; i < Math.round(D.artistHours[k]); i++) colors.push(k); });
+  while (colors.length < total) colors.push(-1);
+  colors.length = total;
+  d3.shuffler(d3.randomLcg(7))(colors);
+  const rand = d3.randomLcg(42);
+  const P = colors.map((c, i) => ({ c, x: 0, y: 0, vx: 0, vy: 0, tx: 0, ty: 0, sx: 0, sy: 0, seed: rand(), delay: rand() * 900 + (i % 7) * 30 }));
+  const groups = [-1, ...D.artists.map((_, k) => k)].map(c => ({ fill: c < 0 ? SWARM.otherColor : SLOTS[c], items: P.filter(p => p.c === c) }));
+  let W = 0, H = 0, dot = 1.5, pointer = { x: -1e4, y: -1e4 }, start = null, frame = 0, visible = true, placed = false;
+
+  function layout() {
+    const dpr = devicePixelRatio || 1;
+    W = hero.clientWidth; H = hero.clientHeight;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, W, H);
-    const step = W / weeks.length, base = H * 0.86, room = H * 0.62;
-    const grad = ctx.createLinearGradient(0, base - room, 0, base);
-    grad.addColorStop(0, "#e2ff9a"); grad.addColorStop(1, ACCENT);
-    ctx.fillStyle = grad;
-    weeks.forEach((v, i) => {
-      const wave = REDUCED ? 1 : 0.82 + 0.18 * Math.sin(t / 420 + i * 0.35) * Math.sin(t / 1300 + i * 0.07);
-      const h = Math.max(1, (v / peak) * room * wave);
-      ctx.fillRect(i * step, base - h, Math.max(1, step - 1.5), h);
-      ctx.globalAlpha = 0.18;
-      ctx.fillRect(i * step, base + 4, Math.max(1, step - 1.5), h * 0.3); // reflection
-      ctx.globalAlpha = 1;
+    const hr = hero.getBoundingClientRect(), br = box.getBoundingClientRect();
+    const bx = br.left - hr.left, by = br.top - hr.top, bw = Math.max(1, Math.floor(br.width)), bh = Math.max(1, Math.floor(br.height));
+    /* Draw the number off screen, then sample its pixels on a grid fine enough for one point per particle. */
+    const off = document.createElement("canvas"); off.width = bw; off.height = bh;
+    const o = off.getContext("2d"), text = fmt(total), family = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+    let size = bh * 1.18;
+    o.font = `800 ${size}px ${family}`;
+    const tw = o.measureText(text).width;
+    if (tw > bw) { size *= bw / tw; o.font = `800 ${size}px ${family}`; }
+    o.textBaseline = "alphabetic"; o.fillStyle = "#fff";
+    const metrics = o.measureText(text), textH = metrics.actualBoundingBoxAscent;
+    o.fillText(text, 0, (bh + textH) / 2);
+    const img = o.getImageData(0, 0, bw, bh).data;
+    let filled = 0;
+    for (let i = 3; i < img.length; i += 4) if (img[i] > 128) filled++;
+    const step = Math.max(1.6, Math.sqrt(filled / total));
+    const targets = [];
+    for (let y = step / 2; y < bh; y += step) for (let x = step / 2; x < bw; x += step) {
+      if (img[(Math.floor(y) * bw + Math.floor(x)) * 4 + 3] > 128) targets.push([bx + x, by + y]);
+    }
+    d3.shuffler(d3.randomLcg(3))(targets);
+    dot = Math.max(1.5, step * 0.62);
+    P.forEach((p, i) => {
+      const [tx, ty] = targets[i % targets.length];
+      p.tx = tx; p.ty = ty;
+      const a = p.seed * Math.PI * 2;
+      p.sx = Math.cos(a) * W * SWARM.scatter * (0.4 + p.seed); p.sy = H * (0.6 + p.seed) + Math.sin(a) * H * 0.3;
+      if (!placed) {
+        if (REDUCED) { p.x = tx; p.y = ty; }
+        else { const b = rand() * Math.PI * 2, r = Math.max(W, H) * (0.6 + rand() * 0.5); p.x = W / 2 + Math.cos(b) * r; p.y = H / 2 + Math.sin(b) * r; }
+      }
     });
+    placed = true;
+  }
+  const scrolled = () => Math.min(1, Math.max(0, -hero.getBoundingClientRect().top / Math.max(1, H)));
+  function step(t) {
+    if (start === null) start = t;
+    const age = t - start, s = d3.easeCubicIn(scrolled());
+    for (const p of P) {
+      if (age < p.delay) continue;
+      const tx = p.tx + p.sx * s + Math.sin(t / 900 + p.seed * 40) * 0.7, ty = p.ty + p.sy * s + Math.cos(t / 1100 + p.seed * 30) * 0.7;
+      let ax = (tx - p.x) * SWARM.spring, ay = (ty - p.y) * SWARM.spring;
+      const dx = p.x - pointer.x, dy = p.y - pointer.y, d2 = dx * dx + dy * dy;
+      if (d2 < SWARM.pushRadius * SWARM.pushRadius && d2 > 0.01) {
+        const d = Math.sqrt(d2), f = (1 - d / SWARM.pushRadius) * SWARM.push;
+        ax += (dx / d) * f; ay += (dy / d) * f;
+      }
+      p.vx = (p.vx + ax) * SWARM.damping; p.vy = (p.vy + ay) * SWARM.damping;
+      p.x += p.vx; p.y += p.vy;
+    }
+  }
+  function paint() {
+    ctx.clearRect(0, 0, W, H);
+    for (const g of groups) {
+      ctx.fillStyle = g.fill;
+      ctx.globalAlpha = g.fill === SWARM.otherColor ? 0.9 : 1;
+      for (const p of g.items) ctx.fillRect(p.x - dot / 2, p.y - dot / 2, dot, dot);
+    }
+    ctx.globalAlpha = 1;
   }
   function loop() {
     cancelAnimationFrame(frame);
-    const tick = t => { paint(t); if (visible && !REDUCED) frame = requestAnimationFrame(tick); };
+    const tick = t => { step(t); paint(); if (visible) frame = requestAnimationFrame(tick); };
     frame = requestAnimationFrame(tick);
   }
-  paint(0);
-  if (!REDUCED) loop();
-  addEventListener("resize", () => paint(performance.now()));
+  layout();
+  paint();
+  if (REDUCED) { addEventListener("resize", () => { placed = false; layout(); paint(); }); return; }
+  hero.addEventListener("pointermove", e => { const r = hero.getBoundingClientRect(); pointer = { x: e.clientX - r.left, y: e.clientY - r.top }; });
+  hero.addEventListener("pointerleave", () => { pointer = { x: -1e4, y: -1e4 }; });
+  new IntersectionObserver(e => { visible = e[0].isIntersecting; if (visible) loop(); }).observe(hero);
+  addEventListener("resize", () => { layout(); paint(); });
+  loop();
 }
 
 /* ================= 1. Artist river ================= */
@@ -208,7 +275,7 @@ function drawRiver() {
 }
 
 /* ================= 2. Bar chart race ================= */
-const race = { f: 0, playing: true, timer: null, started: false, render: null };
+const race = { f: 0, playing: true, timer: null, started: false, render: null, speed: 1 };
 const RACE_BARS = 10, RACE_BARS_PHONE = 6, RACE_MONTH_MS = 380;
 function drawRace() {
   const root = document.getElementById("race");
@@ -293,400 +360,526 @@ function playRace() {
   let prev = null;
   race.timer = d3.timer(elapsed => {
     const dt = prev === null ? 0 : elapsed - prev; prev = elapsed;
-    race.f = Math.min(last, race.f + dt / RACE_MONTH_MS);
+    race.f = Math.min(last, race.f + (dt * race.speed) / RACE_MONTH_MS);
     race.render(race.f);
     if (race.f >= last) { race.timer.stop(); race.playing = false; setPlayButton(); }
   });
 }
 function pauseRace() { if (race.timer) race.timer.stop(); race.playing = false; setPlayButton(); }
 document.getElementById("race-play").addEventListener("click", () => { race.started = true; if (race.playing) pauseRace(); else playRace(); });
+document.querySelectorAll("#race-speed button").forEach(b => b.addEventListener("click", () => {
+  race.speed = +b.dataset.speed;
+  document.querySelectorAll("#race-speed button").forEach(o => o.setAttribute("aria-pressed", String(o === b)));
+}));
 document.getElementById("race-scrub").addEventListener("input", e => { pauseRace(); race.started = true; race.f = +e.target.value; race.render(race.f); });
 
-/* ================= 3. Obsessions ================= */
-function drawObsessions() {
-  const root = document.getElementById("obsessions");
+/* ================= 3. Songs with a story ================= */
+/* A song by a top artist keeps that artist's colour; the others take the colours no row uses yet. */
+function storyColors(stories) {
+  const own = stories.map(s => (D.artists.includes(s.artist) ? colorOf(s.artist) : null));
+  const pool = [...SLOTS, ...RACE_EXTRA].filter(c => !own.includes(c));
+  return own.map(c => c ?? pool.shift() ?? OTHER);
+}
+const dayDate = day => new Date(+FIRST_DAY + day * DAY_MS);
+function drawStories() {
+  const S = D.stories, root = document.getElementById("stories");
   root.innerHTML = "";
-  const W = widthOf(root), H = heightOf(root, 560), inset = insetOf();
-  const obs = D.obsessions, nWeeks = Math.ceil(D.meta.spanDays / 7) + 1;
-  const weekDate = w => new Date(+FIRST_WEEK + w * 7 * DAY_MS);
-  const x = d3.scaleTime().domain([FIRST_WEEK, weekDate(nWeeks)]).range([0, W]);
-  const headroom = 0.6; // extra rows of space above the first baseline so the tallest spike fits
-  const rowH = (H - 30) / (obs.length + headroom), peak = d3.max(obs, o => o.peak);
-  const y = d3.scaleLinear().domain([0, peak]).range([0, rowH * (1 + headroom)]);
+  const phone = isPhone(), W = widthOf(root), inset = insetOf();
+  const H = heightOf(root, S.length * (phone ? 78 : 60) + 30);
+  const rowH = (H - 30) / S.length;
+  const labelW = phone ? 0 : Math.min(330, W * 0.3);
+  const x = d3.scaleTime().domain([FIRST_DAY, LAST_DAY]).range([phone ? inset : inset + labelW + 20, W - inset]);
+  const colors = storyColors(S);
+  const maxN = d3.max(S, s => d3.max(s.days, d => d[1]));
+  const rad = d3.scaleSqrt().domain([1, maxN]).range([2.6, Math.min(11, rowH * 0.24)]);
+  const base = phone ? rowH - 18 : rowH * 0.58;
   const svg = d3.select(root).append("svg").attr("width", W).attr("height", H).attr("role", "img")
-    .attr("aria-label", "Weekly plays of my twelve biggest one-week obsessions, one row per song");
-  yearTicks(svg, x, H, inset);
+    .attr("aria-label", `Ten songs with a story, one row each, a dot per day played`);
+  yearTicks(svg, x, H, x.range()[0]);
   const defs = svg.append("defs");
-  const glow = defs.append("filter").attr("id", "glow").attr("x", "-50%").attr("y", "-50%").attr("width", "200%").attr("height", "200%");
-  glow.append("feGaussianBlur").attr("stdDeviation", 3).attr("result", "b");
+  const glow = defs.append("filter").attr("id", "story-glow").attr("x", "-50%").attr("y", "-50%").attr("width", "200%").attr("height", "200%");
+  glow.append("feGaussianBlur").attr("stdDeviation", 2.5).attr("result", "b");
   const merge = glow.append("feMerge"); merge.append("feMergeNode").attr("in", "b"); merge.append("feMergeNode").attr("in", "SourceGraphic");
-  const waiting = isWaiting("obsessions");
-  const rows = svg.append("g").selectAll("g").data(obs).join("g").attr("transform", (_, i) => `translate(0,${(i + 1 + headroom) * rowH})`);
-  rows.append("line").attr("x1", 0).attr("x2", W).attr("stroke", "#232329");
-  const dense = o => { const v = new Array(nWeeks).fill(0); o.weeks.forEach(([w, n]) => { if (w >= 0 && w < nWeeks) v[w] = n; }); return v; };
-  const line = d3.area().x((_, w) => x(weekDate(w))).y0(0).y1(n => -y(n)).curve(d3.curveMonotoneX);
-  const fillOf = o => (isTop(o.artist) ? colorOf(o.artist) : OTHER_LIGHT);
-  const paths = rows.append("path").attr("fill", fillOf).attr("fill-opacity", 0.85).attr("stroke", fillOf).attr("stroke-width", 1).attr("filter", "url(#glow)")
-    .attr("d", o => line(dense(o)))
-    .attr("transform", waiting ? "scale(1,0)" : null);
-  /* Label sits left; when the song's peak is under it, it moves to the right edge. */
-  const labelW = o => (o.track.length + o.artist.length + 2) * 6.8;
-  const peakX = o => x(parseDay(o.peakWeek));
-  const onRight = o => peakX(o) < inset + labelW(o) + 30;
-  rows.append("text").attr("x", o => (onRight(o) ? W - inset : inset)).attr("text-anchor", o => (onRight(o) ? "end" : "start")).attr("y", -5).style("fill", "var(--ink)").style("font-size", "13px").style("font-weight", 600)
-    .attr("paint-order", "stroke").attr("stroke", "#09090b").attr("stroke-width", 4)
-    .text(o => (isPhone() && o.track.length > 28 ? `${o.track.slice(0, 27)}…` : o.track))
-    .append("tspan").style("fill", "var(--muted)").style("font-weight", 400).text(o => `  ${o.artist}`);
-  rows.append("text").attr("x", o => x(parseDay(o.peakWeek)) + 8).attr("y", o => -y(o.peak) + 10)
-    .style("fill", "var(--ink-2)").style("font-size", "12px").attr("paint-order", "stroke").attr("stroke", "#09090b").attr("stroke-width", 3).text(o => o.peak);
-  if (waiting) revealOnView("obsessions", root, () => paths.transition().delay((_, i) => i * 70).duration(900).ease(d3.easeBackOut.overshoot(1.4)).attr("transform", "scale(1,1)"));
-  const show = (event, o) => {
-    rows.attr("opacity", d => (d === o ? 1 : 0.25));
-    showTip(event, `<b>${esc(o.track)}</b>${esc(o.artist)}<br>${o.peak} plays in the week of ${longDay(parseDay(o.peakWeek))}<br>` +
-      `<span class="k">${o.total} plays in total; ${pct(o.nearPeakShare)} of them within a week of the peak</span>`);
+  const rows = svg.append("g").selectAll("g").data(S).join("g").attr("transform", (_, i) => `translate(0,${i * rowH})`);
+  rows.append("rect").attr("x", 0).attr("width", W).attr("height", rowH).attr("fill", "transparent");
+  rows.append("line").attr("x1", x.range()[0]).attr("x2", x.range()[1]).attr("y1", base).attr("y2", base).attr("stroke", "#232329");
+  /* Season bands for the seasonal stories, highlight boxes for the ones with a moment. */
+  const [y0, y1] = [FIRST_DAY.getFullYear() - 1, LAST_DAY.getFullYear()];
+  const band = (g, from, to, color) => g.append("rect").attr("x", x(from)).attr("width", Math.max(2, x(to) - x(from))).attr("y", base - rowH * 0.3).attr("height", rowH * 0.6)
+    .attr("rx", 3).attr("fill", color).attr("fill-opacity", 0.2);
+  rows.each(function (s, i) {
+    const g = d3.select(this), c = colors[i];
+    const clampDate = d => new Date(Math.min(+LAST_DAY, Math.max(+FIRST_DAY, +d)));
+    if (s.kind === "summer") d3.range(y0 + 1, y1 + 1).forEach(y => band(g, clampDate(new Date(y, 5, 1)), clampDate(new Date(y, 8, 1)), c));
+    if (s.kind === "christmas") d3.range(y0, y1 + 1).forEach(y => band(g, clampDate(new Date(y, 11, 20)), clampDate(new Date(y + 1, 0, 7)), c));
+    if (s.mark && s.kind === "comeback") {
+      const [a, b] = s.mark.map(dayDate);
+      g.append("line").attr("x1", x(a)).attr("x2", x(b)).attr("y1", base).attr("y2", base).attr("stroke", c).attr("stroke-width", 1.5).attr("stroke-dasharray", "3 5");
+      g.append("text").attr("x", (x(a) + x(b)) / 2).attr("y", base - 8).attr("text-anchor", "middle").style("fill", "var(--ink-2)").style("font-size", "12px")
+        .text(`${fmt(Math.round((b - a) / DAY_MS))} days of silence`);
+    } else if (s.mark) {
+      const [a, b] = s.mark.map(dayDate);
+      /* A short bar under the dots marks the streak or the binge week. */
+      g.append("line").attr("x1", x(a) - 3).attr("x2", x(b) + 3).attr("y1", base + 13).attr("y2", base + 13).attr("stroke", c).attr("stroke-width", 2.5).attr("stroke-linecap", "round");
+    }
+  });
+  const waiting = isWaiting("stories");
+  const dots = rows.selectAll("circle").data((s, i) => s.days.map(([day, n]) => ({ s, i, day, n }))).join("circle")
+    .attr("cx", d => x(dayDate(d.day))).attr("cy", base).attr("r", d => (waiting ? 0 : rad(d.n)))
+    .attr("fill", d => colors[d.i]).attr("fill-opacity", 0.9).attr("filter", "url(#story-glow)");
+  if (waiting) revealOnView("stories", root, () => dots.transition().delay(d => d.i * 90 + (x(dayDate(d.day)) / W) * 700).duration(500)
+    .ease(d3.easeBackOut.overshoot(2)).attr("r", d => rad(d.n)));
+  /* Label: the story in big type, the song beneath it. Desktop puts it in a left column. */
+  const lx = inset, ly = phone ? 18 : base - 4;
+  const label = rows.append("text").attr("x", lx).attr("y", ly).style("pointer-events", "none");
+  label.append("tspan").style("fill", "var(--ink)").style("font-size", phone ? "15px" : "16px").style("font-weight", 650).text(s => s.title);
+  rows.append("text").attr("x", lx).attr("y", ly + (phone ? 17 : 18)).style("fill", "var(--muted)").style("font-size", "12px").style("pointer-events", "none")
+    .text(s => { const t = `${s.track} · ${s.artist}`, max = phone ? 46 : Math.floor(labelW / 6.6); return t.length > max ? `${t.slice(0, max - 1)}…` : t; });
+  const showRow = (event, s) => {
+    rows.attr("opacity", d => (d === s ? 1 : 0.28));
+    showTip(event, `<b>${esc(s.track)}</b>${esc(s.artist)}<br>${esc(s.title)}: ${esc(s.note)}<br><span class="k">${fmt(s.plays)} plays on ${s.days.length} days</span>`);
+  };
+  const showDot = (event, d) => {
+    rows.attr("opacity", r => (r === d.s ? 1 : 0.28));
+    showTip(event, `<b>${esc(d.s.track)}</b>${esc(d.s.artist)}<br>${longDay(dayDate(d.day))}: ${d.n} play${d.n > 1 ? "s" : ""}<br><span class="k">${esc(d.s.title)}: ${esc(d.s.note)}</span>`);
   };
   const clear = () => { rows.attr("opacity", 1); hideTip(); };
-  rows.on("pointermove", show).on("pointerleave", clear);
-  keyboardTour(svg, paths, show, clear);
-  const top = obs[0];
-  headline("obs-title")`I played “${top.track}” ${N(`${top.peak} times`)} in a single week.`;
+  rows.on("pointermove", showRow).on("pointerleave", clear);
+  dots.on("pointermove", (event, d) => { event.stopPropagation(); showDot(event, d); });
+  keyboardTour(svg, rows, showRow, clear);
+  const birthday = S.find(s => s.kind === "birthday");
+  if (birthday) headline("story-title")`One song I only play on birthdays: “${birthday.track}”, ${N(`${birthday.plays} plays`)} on just ${birthday.days.length} days.`;
+  else headline("story-title")`Ten songs, ten stories: “${S[0].track}” ${N(S[0].title.toLowerCase())}.`;
 }
 
-/* ================= 4. Canserbero spotlight ================= */
-const spot = { isolated: null, progress: REDUCED ? 1 : 0 };
-function drawSpotlight() {
-  const S = D.spotlight, root = document.getElementById("spotlight");
+/* ================= 4. Canserbero's climb ================= */
+function drawRank() {
+  const R = D.rank, root = document.getElementById("rank");
   root.innerHTML = "";
-  const W = widthOf(root), H = heightOf(root, 340), inset = insetOf(), bottom = 26;
-  const years = Object.entries(S.yearHours), maxYear = d3.max(years, ([, h]) => h);
-  document.getElementById("spot-years").innerHTML = years.map(([yr, h]) =>
-    `<div class="year"><span>${yr}</span><span class="big">${fmtH(h)} h</span><span class="swatch" style="width:${Math.max(4, (100 * h) / maxYear)}%"></span></div>`).join("");
-  /* Only the top three songs get a colour, all from Canserbero's lime family; the rest stay grey. */
-  const SONG_COLORS = [ACCENT, NEUTRAL_HI, "#6f9a22"];
-  const songColor = s => (s >= 0 && s < SONG_COLORS.length ? SONG_COLORS[s] : OTHER);
-  const legend = document.getElementById("spot-legend");
-  legend.innerHTML = S.songs.slice(0, SONG_COLORS.length).map((s, i) => `<li><button type="button" data-song="${i}" aria-pressed="${spot.isolated === i}"><i style="background:${SONG_COLORS[i]}"></i>${esc(s)} · ${S.songPlays[i]}</button></li>`).join("") +
-    `<li><i style="background:${OTHER}"></i>Other songs</li>`;
-  legend.querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
-    const s = +b.dataset.song; spot.isolated = spot.isolated === s ? null : s;
-    legend.querySelectorAll("button").forEach(o => o.setAttribute("aria-pressed", String(+o.dataset.song === spot.isolated)));
-    paint();
-  }));
-  const dpr = devicePixelRatio || 1;
-  const canvas = d3.select(root).append("canvas").attr("width", W * dpr).attr("height", H * dpr).style("width", `${W}px`).style("height", `${H}px`)
-    .attr("role", "img").attr("aria-label", `Every ${S.artist} play as a dot, by date and hour of day`).node();
-  const ctx = canvas.getContext("2d"); ctx.scale(dpr, dpr);
-  const x = d3.scaleTime().domain([FIRST_DAY, parseDay(D.meta.lastDay)]).range([4, W - 4]);
-  const y = d3.scaleLinear().domain([0, 24]).range([8, H - bottom]);
-  const pts = S.points.map(([day, hr, song], i) => ({ px: x(new Date(+FIRST_DAY + (day + jitter(i)) * DAY_MS)), py: y(hr + 0.1 + 0.8 * jitter(i + 7)), day, hr, song }));
-  const r = isPhone() ? 1.4 : 2;
-  function paint() {
-    ctx.clearRect(0, 0, W, H);
-    ctx.strokeStyle = "#232329"; ctx.fillStyle = "#8b8a94"; ctx.font = "12px system-ui, sans-serif"; ctx.textBaseline = "middle";
-    [0, 6, 12, 18].forEach(h => { ctx.beginPath(); ctx.moveTo(0, y(h)); ctx.lineTo(W, y(h)); ctx.stroke(); });
-    d3.timeYear.range(d3.timeYear.ceil(x.domain()[0]), x.domain()[1]).forEach(d => {
-      ctx.beginPath(); ctx.moveTo(x(d), 0); ctx.lineTo(x(d), H - bottom); ctx.stroke();
-      ctx.textAlign = "center"; ctx.fillText(d.getFullYear(), x(d), H - 9);
-    });
-    const upto = Math.round(pts.length * spot.progress);
-    for (let i = 0; i < upto; i++) {
-      const p = pts[i], on = spot.isolated === null || p.song === spot.isolated;
-      ctx.globalAlpha = on ? 0.9 : 0.06;
-      ctx.fillStyle = on ? songColor(p.song) : "#555";
-      ctx.beginPath(); ctx.arc(p.px, p.py, r, 0, 2 * Math.PI); ctx.fill();
-    }
-    ctx.globalAlpha = 1;
-    ctx.textAlign = "left"; ctx.fillStyle = "#c4c3bb";
-    /* Hour labels sit on a page-coloured plate so no gridline or dot runs through them. */
-    [0, 6, 12, 18].forEach(h => {
-      const ly = y(h) + 11, lw = ctx.measureText(hh(h)).width;
-      ctx.fillStyle = "#09090b"; ctx.fillRect(inset - 4, ly - 9, lw + 8, 18);
-      ctx.fillStyle = "#c4c3bb"; ctx.fillText(hh(h), inset, ly);
+  const W = widthOf(root), H = heightOf(root, 360), inset = insetOf();
+  const pts = MONTHS.map((m, i) => ({ m, i, rank: R.rank[i], field: R.field[i], share: R.share[i], hours: R.hoursByMonth[i] }));
+  const ranked = pts.filter(p => p.rank !== null);
+  const maxRank = d3.max(ranked, p => p.rank);
+  const x = d3.scaleTime().domain(d3.extent(MONTHS)).range([inset + 34, W - inset]);
+  const y = d3.scaleLog().domain([1, maxRank * 1.15]).range([30, H - 34]);
+  const svg = d3.select(root).append("svg").attr("width", W).attr("height", H).attr("role", "img")
+    .attr("aria-label", `${R.artist}'s monthly rank among all the artists I played, by hours`);
+  yearTicks(svg, x, H, x.range()[0]);
+  [1, 2, 5, 10, 20, 50, 100, 200].filter(r => r <= maxRank * 1.15).forEach(r => {
+    svg.append("line").attr("x1", x.range()[0]).attr("x2", W).attr("y1", y(r)).attr("y2", y(r)).attr("stroke", r === 1 ? "#35353d" : "#1d1d22");
+    svg.append("text").attr("x", inset).attr("y", y(r) + 4).style("fill", r === 1 ? "var(--ink)" : "var(--muted)").style("font-weight", r === 1 ? 650 : 400).text(`#${r}`);
+  });
+  const defs = svg.append("defs");
+  const glow = defs.append("filter").attr("id", "rank-glow").attr("x", "-20%").attr("y", "-50%").attr("width", "140%").attr("height", "200%");
+  glow.append("feGaussianBlur").attr("stdDeviation", 4).attr("result", "b");
+  const merge = glow.append("feMerge"); merge.append("feMergeNode").attr("in", "b"); merge.append("feMergeNode").attr("in", "SourceGraphic");
+  const line = d3.line().defined(p => p.rank !== null).x(p => x(p.m)).y(p => y(p.rank)).curve(d3.curveMonotoneX);
+  const path = svg.append("path").datum(pts).attr("d", line).attr("fill", "none").attr("stroke", ACCENT).attr("stroke-width", 3).attr("stroke-linejoin", "round").attr("filter", "url(#rank-glow)");
+  const dots = svg.append("g").selectAll("circle").data(ranked).join("circle").attr("cx", p => x(p.m)).attr("cy", p => y(p.rank))
+    .attr("r", p => (p.rank === 1 ? 5 : 2.5)).attr("fill", p => (p.rank === 1 ? ACCENT : "#09090b")).attr("stroke", ACCENT).attr("stroke-width", 1.5);
+  /* Annotations: where it started and when it first reached the top. */
+  const first = ranked[0], firstTop = ranked.find(p => p.rank === 1);
+  const note = (p, text, below) => {
+    const tx = Math.min(W - inset - 6, Math.max(x.range()[0] + 4, x(p.m) + 10));
+    const anchor = x(p.m) > W - 220 ? "end" : "start";
+    svg.append("text").attr("x", anchor === "end" ? x(p.m) - 10 : tx).attr("y", y(p.rank) + (below ? 22 : -12)).attr("text-anchor", anchor)
+      .style("fill", "var(--ink)").style("font-size", "13px").style("font-weight", 600).attr("paint-order", "stroke").attr("stroke", "#09090b").attr("stroke-width", 4).text(text);
+  };
+  note(first, `#${first.rank} in ${monthName(first.m)}`, true);
+  if (firstTop) note(firstTop, `First #1, ${monthName(firstTop.m)}`, false);
+  if (isWaiting("rank")) {
+    const L = path.node().getTotalLength();
+    path.attr("stroke-dasharray", `${L} ${L}`).attr("stroke-dashoffset", L);
+    dots.attr("opacity", 0);
+    revealOnView("rank", root, () => {
+      path.transition().duration(2200).ease(d3.easeCubicInOut).attr("stroke-dashoffset", 0).on("end", () => path.attr("stroke-dasharray", null));
+      dots.transition().delay(p => 200 + ((x(p.m) - x.range()[0]) / (x.range()[1] - x.range()[0])) * 2000).duration(250).attr("opacity", 1);
     });
   }
-  paint();
-  if (spot.progress < 1) revealOnView("spotlight", root, () => {
-    const timer = d3.timer(elapsed => { spot.progress = Math.min(1, d3.easeCubicInOut(Math.min(1, elapsed / 2600))); paint(); if (spot.progress >= 1) timer.stop(); });
-  });
-  const delaunay = d3.Delaunay.from(pts, p => p.px, p => p.py);
-  canvas.addEventListener("pointermove", event => {
-    const [mx, my] = d3.pointer(event, canvas), i = delaunay.find(mx, my), p = pts[i];
-    if (!p || Math.hypot(p.px - mx, p.py - my) > 14) { hideTip(); return; }
-    showTip(event, `<b>${esc(p.song >= 0 ? S.songs[p.song] : "Another song")}</b>${longDay(new Date(+FIRST_DAY + p.day * DAY_MS))}, around ${hh(p.hr)}`);
-  });
-  canvas.addEventListener("pointerleave", hideTip);
-  const y0 = years[0], peakYear = years.reduce((a, b) => (b[1] > a[1] ? b : a));
-  headline("spot-title")`${S.artist} went from ${fmtH(y0[1])} hours in ${y0[0]} to ${N(`${fmtH(peakYear[1])} hours`)} in ${peakYear[0]}.`;
-  setText("spot-sub", `${fmt(S.plays)} plays and ${fmtH(S.hours)} hours on ${S.activeDays} different days, with a longest run of ${S.longestStreak} days in a row. ` +
-    `Each dot is one play, by date and hour of day; my three most played songs are lit, and clicking one isolates it.`);
+  const guide = svg.append("line").attr("y1", 0).attr("y2", H - 24).attr("stroke", "var(--ink-2)").attr("stroke-dasharray", "2 3").attr("opacity", 0);
+  const show = (event, p) => {
+    guide.attr("x1", x(p.m)).attr("x2", x(p.m)).attr("opacity", 1);
+    dots.attr("r", d => (d === p ? 7 : d.rank === 1 ? 5 : 2.5));
+    showTip(event, p.rank === null ? `<b>${monthName(p.m)}</b>No ${esc(R.artist)} that month`
+      : `<b>${monthName(p.m)}</b>#${p.rank} of ${fmt(p.field)} artists<br>${fmtH(p.hours)} hours, ${pct(p.share)} of everything I played`);
+  };
+  const clear = () => { guide.attr("opacity", 0); dots.attr("r", d => (d.rank === 1 ? 5 : 2.5)); hideTip(); };
+  const step = (x.range()[1] - x.range()[0]) / (MONTHS.length - 1);
+  const hit = svg.append("g").selectAll("rect").data(pts).join("rect").attr("x", p => x(p.m) - step / 2).attr("width", step).attr("y", 0).attr("height", H - 24).attr("fill", "transparent");
+  hit.on("pointermove", show).on("pointerleave", clear);
+  keyboardTour(svg, hit.filter(p => p.rank !== null), show, clear);
+  /* Year strip: months at #1 that year and the song that carried it. */
+  const years = d3.groups(pts.filter(p => p.rank !== null), p => p.m.getFullYear());
+  document.getElementById("rank-years").innerHTML = years.map(([yr, ps]) => {
+    const era = R.eras.find(e => e.year === yr), tops = ps.filter(p => p.rank === 1).length;
+    return `<div class="year"><span>${yr}</span><span class="big">${tops ? `#1 × ${tops}` : `best #${d3.min(ps, p => p.rank)}`}</span><span class="song">${era ? esc(era.song) : ""}</span></div>`;
+  }).join("");
+  const tops = ranked.filter(p => p.rank === 1).length;
+  headline("rank-title")`${R.artist} went from #${first.rank} in ${monthName(first.m)} to my top artist in ${N(`${tops} different months`)}.`;
+  setText("rank-sub", `The line is his rank among every artist I played that month, by hours, with #1 at the top; lime dots are months he led, gaps are months without him. ` +
+    `Under each year, the song I played most.`);
 }
 
-/* ================= 5. Day clock ================= */
-function drawClock() {
-  const root = document.getElementById("clock");
+/* ================= 5. Genre galaxy ================= */
+const galaxy = { year: "all", isolated: null, sim: null };
+function genreLeaders() {
+  const G = D.genres;
+  return G.years.map((yr, yi) => {
+    const best = d3.greatest(G.genres, g => G.totals[g]?.[yi] ?? 0);
+    return { yr, genre: best, hours: G.totals[best][yi] };
+  });
+}
+function drawGenres() {
+  const G = D.genres, root = document.getElementById("genres");
   root.innerHTML = "";
-  const W = widthOf(root), H = heightOf(root, Math.min(widthOf(root), 420));
-  const size = Math.min(W, H), R = size / 2 - 44 /* room for hour labels */, r0 = R * 0.3, ring = (R - r0) / 7;
-  const cells = D.clock, maxPlays = d3.max(cells, c => c.plays);
-  // Domain starts at the quietest cell, not zero, so the ramp spends its range on real differences.
-  const color = d3.scaleSequential(d3.interpolateRgbBasis(HEAT)).domain([d3.min(cells, c => c.plays), maxPlays]);
+  if (galaxy.sim) galaxy.sim.stop();
+  const phone = isPhone(), W = widthOf(root), H = heightOf(root, 760), inset = insetOf();
+  const yi = () => (galaxy.year === "all" ? -1 : G.years.indexOf(galaxy.year));
+  const hoursOf = a => (yi() < 0 ? d3.sum(a.hy) : a.hy[yi()]);
+  /* Genre homes on an ellipse; the biggest genre sits at the top. */
+  const homes = G.genres.map((_, g) => {
+    const a = -Math.PI / 2 + (g / G.genres.length) * Math.PI * 2;
+    return [W / 2 + Math.cos(a) * W * (phone ? 0.25 : 0.33), H / 2 + Math.sin(a) * H * (phone ? 0.37 : 0.3)];
+  });
+  const nodes = G.artists.map((a, i) => ({ a: a.a, g: a.g, hy: a.y, i, x: homes[a.g][0] + (jitter(i) - 0.5) * 40, y: homes[a.g][1] + (jitter(i + 3) - 0.5) * 40, r: 0 }));
   const svg = d3.select(root).append("svg").attr("width", W).attr("height", H).attr("role", "img")
-    .attr("aria-label", "Radial heat map of plays by hour of day and weekday");
-  const g = svg.append("g").attr("transform", `translate(${W / 2},${H / 2})`);
-  /* A gap at midnight holds the weekday names, so they never sit on top of cells. */
-  const GAP = size >= 360 ? 0.42 : 0.18;
-  const angle = h => GAP / 2 + (h / 24) * (2 * Math.PI - GAP);
-  const arc = d3.arc().innerRadius(c => r0 + c.dow * ring + 1).outerRadius(c => r0 + (c.dow + 1) * ring - 1)
-    .startAngle(c => angle(c.hr)).endAngle(c => angle(c.hr + 1)).padAngle(0.012).cornerRadius(2);
-  const waiting = isWaiting("clock");
-  const paths = g.selectAll("path").data(cells).join("path").attr("d", arc).attr("fill", c => color(c.plays)).attr("opacity", waiting ? 0 : 1);
-  if (waiting) revealOnView("clock", root, () => paths.transition().delay(c => c.hr * 45 + c.dow * 12).duration(500).attr("opacity", 1));
-  d3.range(0, 24, size < 420 ? 6 : 3).forEach(h => {
-    const a = angle(h);
-    g.append("text").attr("x", Math.sin(a) * (R + 16)).attr("y", -Math.cos(a) * (R + 16) + 4).attr("text-anchor", "middle").text(hh(h));
-  });
-  if (size >= 360) DAYS_SHORT.forEach((d, i) => {
-    g.append("text").attr("x", 0).attr("y", -(r0 + (i + 0.5) * ring) + 4).attr("text-anchor", "middle")
-      .style("font-size", "12px").style("fill", "var(--ink-2)").text(d);
-  });
-  const peak = cells.reduce((a, b) => (b.plays > a.plays ? b : a));
-  const big = g.append("text").attr("text-anchor", "middle").attr("y", -6).style("fill", "var(--ink)").style("font-size", `${Math.max(16, r0 * 0.28)}px`).style("font-weight", 650);
-  const small = g.append("text").attr("text-anchor", "middle").attr("y", 16).style("fill", "var(--ink-2)").style("font-size", "12px");
-  const center = c => { big.text(`${DAYS_SHORT[c.dow]} ${hh(c.hr)}`); small.text(`${fmt(c.plays)} plays · ${c.top}`); };
-  center(peak);
-  const show = (event, c) => {
-    paths.attr("opacity", d => (d === c ? 1 : 0.35)).attr("stroke", d => (d === c ? "var(--ink)" : null)).attr("stroke-width", 1.5);
-    center(c);
-    showTip(event, `<b>${DAYS[c.dow]}s, ${hh(c.hr)}–${hh((c.hr + 1) % 24)}</b>${fmt(c.plays)} plays, ${fmtH(c.hours)} hours<br>Most played: ${esc(c.top)} (${c.topPlays})`);
+    .attr("aria-label", "Bubbles of my top artists grouped by genre, sized by hours");
+  const bubbles = svg.append("g").selectAll("g").data(nodes, d => d.a).join("g");
+  const circles = bubbles.append("circle").attr("fill", d => genreColor(d.g)).attr("fill-opacity", 0.9).attr("stroke", "#09090b").attr("stroke-width", 1);
+  const names = bubbles.append("text").attr("text-anchor", "middle").attr("dy", "0.35em").style("fill", ON_NEON).style("font-size", "11px").style("font-weight", 600).style("pointer-events", "none");
+  const tags = svg.append("g").style("pointer-events", "none").selectAll("g").data(G.genres).join("g");
+  tags.append("text").attr("text-anchor", "middle").style("fill", "var(--ink)").style("font-size", phone ? "13px" : "15px").style("font-weight", 650)
+    .attr("paint-order", "stroke").attr("stroke", "#09090b").attr("stroke-width", 4).text(g => g);
+  const tagHours = tags.append("text").attr("text-anchor", "middle").attr("dy", "1.2em").style("fill", "var(--ink-2)").style("font-size", "12px")
+    .attr("paint-order", "stroke").attr("stroke", "#09090b").attr("stroke-width", 4);
+  const maxR = Math.min(W, H) * (phone ? 0.085 : 0.11);
+  function radii() {
+    const rad = d3.scaleSqrt().domain([0, d3.max(nodes, hoursOf) || 1]).range([0, maxR]);
+    nodes.forEach(d => { d.target = hoursOf(d) > 0 ? Math.max(2, rad(hoursOf(d))) : 0; });
+    collide.radius(d => (d.target > 0 ? d.target + 1.5 : 0)); // the accessor is cached, so set it again on every change
+  }
+  function render() {
+    bubbles.attr("transform", d => `translate(${d.x},${d.y})`);
+    circles.attr("r", d => d.r);
+    names.text(d => (d.r * 2 > d.a.length * 6.4 + 6 ? d.a : ""));
+    tags.attr("transform", g => {
+      const own = nodes.filter(d => d.g === G.genres.indexOf(g) && d.r > 0);
+      if (!own.length) return `translate(${homes[G.genres.indexOf(g)]})`;
+      const top = d3.min(own, d => d.y - d.r), cx = d3.mean(own, d => d.x);
+      return `translate(${Math.min(W - inset - 60, Math.max(inset + 60, cx))},${Math.max(16, top - 26)})`;
+    });
+    tagHours.text(g => { const k = G.genres.indexOf(g); return `${fmtH(d3.sum(nodes.filter(d => d.g === k), hoursOf))} h`; });
+  }
+  const collide = d3.forceCollide().iterations(2);
+  const sim = d3.forceSimulation(nodes)
+    .force("x", d3.forceX(d => homes[d.g][0]).strength(0.09))
+    .force("y", d3.forceY(d => homes[d.g][1]).strength(0.09))
+    .force("collide", collide)
+    .alphaDecay(0.03).on("tick", () => {
+      nodes.forEach(d => { d.r += (d.target - d.r) * 0.12; d.x = Math.max(d.r + 2, Math.min(W - d.r - 2, d.x)); d.y = Math.max(d.r + 30, Math.min(H - d.r - 2, d.y)); });
+      render();
+    }).stop();
+  galaxy.sim = sim;
+  radii();
+  const waiting = isWaiting("genres");
+  if (!waiting) { nodes.forEach(d => { d.r = d.target; }); for (let i = 0; i < 260; i++) sim.tick(); render(); }
+  else {
+    render();
+    revealOnView("genres", root, () => sim.alpha(1).restart());
+  }
+  const yearBox = document.getElementById("genre-years");
+  yearBox.innerHTML = ["all", ...G.years].map(y => `<button type="button" data-year="${y}" aria-pressed="${galaxy.year === y}">${y === "all" ? "All years" : y}</button>`).join("");
+  yearBox.querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
+    galaxy.year = b.dataset.year === "all" ? "all" : +b.dataset.year;
+    yearBox.querySelectorAll("button").forEach(o => o.setAttribute("aria-pressed", String(o === b)));
+    radii();
+    if (REDUCED) { nodes.forEach(d => { d.r = d.target; }); for (let i = 0; i < 200; i++) sim.tick(); render(); }
+    else sim.alpha(0.7).restart();
+  }));
+  const isolate = () => bubbles.attr("opacity", d => (galaxy.isolated === null || d.g === galaxy.isolated ? 1 : 0.12));
+  const legend = document.getElementById("genre-legend");
+  legend.innerHTML = G.genres.map((g, k) => `<li><button type="button" data-g="${k}" aria-pressed="${galaxy.isolated === k}"><i style="background:${genreColor(k)}"></i>${esc(g)}</button></li>`).join("");
+  legend.querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
+    const k = +b.dataset.g; galaxy.isolated = galaxy.isolated === k ? null : k;
+    legend.querySelectorAll("button").forEach(o => o.setAttribute("aria-pressed", String(+o.dataset.g === galaxy.isolated)));
+    isolate();
+  }));
+  isolate();
+  const show = (event, d) => {
+    circles.attr("stroke", o => (o === d ? "var(--ink)" : "#09090b")).attr("stroke-width", o => (o === d ? 2 : 1));
+    showTip(event, `<b>${esc(d.a)}</b>${esc(G.genres[d.g])}<br>${fmtH(hoursOf(d))} hours ${galaxy.year === "all" ? "in all" : `in ${galaxy.year}`}`);
   };
-  const clear = () => { paths.attr("opacity", 1).attr("stroke", null); center(peak); hideTip(); };
-  paths.on("pointermove", show).on("pointerleave", clear);
-  keyboardTour(svg, paths, show, clear);
-  const total = d3.sum(cells, c => c.plays), night = d3.sum(cells.filter(c => c.hr < 6), c => c.plays);
-  headline("clock-title")`My music peaks on ${DAYS[peak.dow]}s at ${N(hh(peak.hr))}; only ${pct(night / total)} of it plays between midnight and 6.`;
+  const clear = () => { circles.attr("stroke", "#09090b").attr("stroke-width", 1); hideTip(); };
+  bubbles.on("pointermove", show).on("pointerleave", clear);
+  keyboardTour(svg, bubbles.filter((_, i) => i < 40), show, clear);
+  const leaders = genreLeaders(), first = leaders[0], last = leaders.at(-1);
+  if (first.genre !== last.genre) headline("genre-title")`${first.genre} ruled ${first.yr}; by ${last.yr} the biggest genre in my ears was ${N(last.genre.toLowerCase())}.`;
+  else headline("genre-title")`${N(first.genre)} led every single year, from ${first.yr} to ${last.yr}.`;
+  setText("genre-sub", "Each bubble is an artist, sized by hours and grouped by genre. Pick a year to watch the clusters grow and shrink, or a genre to isolate it.");
+  setText("genre-how", `The Spotify export has no genre field, so I tagged my ${G.artists.length} most played artists by hand, one genre each. ` +
+    `They cover ${pct(G.coverage)} of all my hours; the long tail of other artists is left out of this chart.`);
 }
 
-/* ================= 6. Skips ================= */
-function drawSkips() {
-  const K = D.skips, root = document.getElementById("skips");
+/* ================= 6. Seasons ================= */
+const seasons = { isolated: null };
+function drawSeasons() {
+  const S = D.seasons.songs, root = document.getElementById("seasons");
   root.innerHTML = "";
-  const W = widthOf(root), H = heightOf(root, 420), inset = insetOf();
-  const worstHour = K.hours.reduce((a, b) => (b[1] > a[1] ? b : a));
-  document.getElementById("skip-chips").innerHTML = [
-    ["", pct1(K.overall), "of all plays skipped"], ["", pct1(K.mode.shuffle), "on shuffle"], ["", pct1(K.mode.chosen), "when I chose the order"],
-    ["", hh(worstHour[0]), `most impatient hour (${pct(worstHour[1])})`],
-  ].map(([c, v, l]) => `<div class="${c}"><b>${v}</b>${esc(l)}</div>`).join("");
-  const arts = K.artists.map(([name, rate, n]) => ({ name, rate, n }));
-  const x = d3.scaleLinear().domain([0, d3.max(arts, a => a.rate) * 1.08]).range([inset + 10, W - inset - 10]);
-  const rad = d3.scaleSqrt().domain([0, d3.max(arts, a => a.n)]).range([5, Math.min(isPhone() ? 26 : 64, H * 0.13)]);
-  const mid = (H - 28) / 2;
-  arts.forEach(a => { a.x = x(a.rate); a.y = mid; });
-  const sim = d3.forceSimulation(arts).force("x", d3.forceX(a => x(a.rate)).strength(0.9)).force("y", d3.forceY(mid).strength(0.06))
-    .force("collide", d3.forceCollide(a => rad(a.n) + 1.5)).stop();
-  for (let i = 0; i < 220; i++) sim.tick();
-  arts.forEach(a => { a.y = Math.max(rad(a.n) + 4, Math.min(H - 30 - rad(a.n), a.y)); });
+  const W = widthOf(root), H = heightOf(root, Math.min(widthOf(root) + 40, 520));
+  const size = Math.min(W, H), R = size / 2 - (size < 420 ? 30 : 40), cx = W / 2, cy = H / 2;
   const svg = d3.select(root).append("svg").attr("width", W).attr("height", H).attr("role", "img")
-    .attr("aria-label", "Bubble strip of artists by skip rate, sized by plays");
-  const ticks = x.ticks(6);
-  svg.append("g").selectAll("line").data(ticks).join("line").attr("x1", x).attr("x2", x).attr("y1", 0).attr("y2", H - 24).attr("stroke", "#232329");
-  svg.append("g").selectAll("text").data(ticks).join("text").attr("x", x).attr("y", H - 8).attr("text-anchor", "middle").text(pct);
-  svg.append("line").attr("x1", x(K.overall)).attr("x2", x(K.overall)).attr("y1", 0).attr("y2", H - 24).attr("stroke", "var(--ink-2)").attr("stroke-dasharray", "4 4");
-  svg.append("text").attr("x", x(K.overall) + 6).attr("y", 14).style("fill", "var(--ink-2)").text(`average ${pct1(K.overall)}`);
-  svg.append("text").attr("x", inset).attr("y", 14).text("let it play");
-  svg.append("text").attr("x", W - inset).attr("y", 14).attr("text-anchor", "end").text("skip it");
-  const waiting = isWaiting("skips");
-  const dots = svg.append("g").selectAll("circle").data(arts).join("circle").attr("cx", a => a.x).attr("cy", a => a.y)
-    .attr("r", a => (waiting ? 0 : rad(a.n))).attr("fill", a => (isTop(a.name) ? colorOf(a.name) : OTHER)).attr("fill-opacity", 0.9).attr("stroke", "#09090b");
-  if (waiting) revealOnView("skips", root, () => dots.transition().delay((_, i) => i * 35).duration(600).ease(d3.easeBackOut.overshoot(1.6)).attr("r", a => rad(a.n)));
-  /* Labels: the extremes plus the top artists. A label outside its bubble must not cover another
-     bubble or another label; anything that would is left to the tooltip. */
-  const labels = svg.append("g").style("pointer-events", "none");
-  const wanted = [...new Set([...arts.slice(0, 3), ...arts.slice(-3), ...arts.filter(a => isTop(a.name))])].sort((a, b) => b.n - a.n);
-  /* Candidate spots per label: inside the bubble if it fits, else below, else above. */
-  const spotsFor = a => {
-    const w = a.name.length * 7, r = rad(a.n), side = { x0: a.x - w / 2, x1: a.x + w / 2 }, text = a.name;
-    if (r * 2 > w + 6) return [{ ...side, y0: a.y - 8, y1: a.y + 8, ty: a.y + 4, inside: true, text }];
-    const short = a.name.split(" ")[0], sw = short.length * 7.4;
-    const spots = [];
-    // A top artist whose full name is too long still gets its first name inside its own colour.
-    if (isTop(a.name) && r * 2 > sw + 6) spots.push({ x0: a.x - sw / 2, x1: a.x + sw / 2, y0: a.y - 8, y1: a.y + 8, ty: a.y + 4, inside: true, text: short });
-    return [...spots, { ...side, y0: a.y + r + 2, y1: a.y + r + 18, ty: a.y + r + 14, text }, { ...side, y0: a.y - r - 18, y1: a.y - r - 2, ty: a.y - r - 6, text }];
-  };
-  const coversBubble = (b, self) => arts.some(o => o !== self && o.x + rad(o.n) > b.x0 && o.x - rad(o.n) < b.x1 && o.y + rad(o.n) > b.y0 && o.y - rad(o.n) < b.y1);
-  const taken = [];
-  const free = b => !taken.some(p => b.x0 < p.x1 && b.x1 > p.x0 && b.y0 < p.y1 && b.y1 > p.y0);
-  wanted.forEach(a => {
-    const b = spotsFor(a).find(s => free(s) && (s.inside || (!coversBubble(s, a) && s.y0 > 18 && s.y1 < H - 26)));
-    if (!b) return; // left to the tooltip
-    taken.push(b);
-    const t = labels.append("text").attr("x", a.x).attr("y", b.ty).attr("text-anchor", "middle").text(b.text);
-    if (b.inside) labelOn(t, isTop(a.name) ? colorOf(a.name) : OTHER);
-    else t.style("fill", "var(--ink-2)").style("font-size", "12px").attr("paint-order", "stroke").attr("stroke", "#09090b").attr("stroke-width", 3);
+    .attr("aria-label", "Radial chart of the year: each song sits at the month it peaks, further out when its plays crowd into one season");
+  const g = svg.append("g").attr("transform", `translate(${cx},${cy})`);
+  const angle = doy => ((doy - 1) / 365.25) * Math.PI * 2;
+  const rr = d3.scaleLinear().domain([0, d3.max(S, s => s.r)]).range([0, R]);
+  const pos = s => [Math.sin(angle(s.doy)) * rr(s.r), -Math.cos(angle(s.doy)) * rr(s.r)];
+  /* Seasons as faint wedges, months around the rim. */
+  const SEASON_WEDGES = [["Winter", 335, 425], ["Spring", 60, 152], ["Summer", 152, 244], ["Autumn", 244, 335]];
+  SEASON_WEDGES.forEach(([name, a, b], k) => {
+    g.append("path").attr("d", d3.arc()({ innerRadius: 0, outerRadius: R, startAngle: angle(a), endAngle: angle(b) })).attr("fill", k % 2 ? "#121216" : "#0d0d10");
+    const mid = angle((a + b) / 2), lr = R * 0.86;
+    if (size >= 420) g.append("text").attr("x", Math.sin(mid) * lr).attr("y", -Math.cos(mid) * lr + 4).attr("text-anchor", "middle")
+      .style("fill", "#4d4c56").style("font-size", "12px").style("letter-spacing", ".14em").style("text-transform", "uppercase").text(name);
   });
-  const show = (event, a) => {
-    dots.attr("opacity", d => (d === a ? 1 : 0.25)).attr("stroke", d => (d === a ? "var(--ink)" : "#09090b")).attr("stroke-width", d => (d === a ? 2 : 1));
-    showTip(event, `<b>${esc(a.name)}</b>${pct1(a.rate)} skipped out of ${fmt(a.n)} plays`);
+  [0.33, 0.66, 1].forEach(f => g.append("circle").attr("r", R * f).attr("fill", "none").attr("stroke", "#232329"));
+  d3.range(12).forEach(mo => {
+    const doy = d3.timeDay.count(new Date(2021, 0, 1), new Date(2021, mo, 1)) + 1, a = angle(doy);
+    g.append("line").attr("x1", 0).attr("y1", 0).attr("x2", Math.sin(a) * R).attr("y2", -Math.cos(a) * R).attr("stroke", "#1b1b20");
+    const am = angle(doy + 15);
+    g.append("text").attr("x", Math.sin(am) * (R + 16)).attr("y", -Math.cos(am) * (R + 16) + 4).attr("text-anchor", "middle")
+      .text(d3.timeFormat(size < 420 ? "%b" : "%B")(new Date(2021, mo, 1)).slice(0, size < 420 ? 1 : 3));
+  });
+  g.append("text").attr("y", 4).attr("text-anchor", "middle").style("fill", "var(--muted)").style("font-size", "11px").text("all year");
+  const rad = d3.scaleSqrt().domain([0, d3.max(S, s => s.n)]).range([1.5, size < 420 ? 6 : 9]);
+  const waiting = isWaiting("seasons");
+  const dots = g.append("g").selectAll("circle").data(S).join("circle").attr("r", s => rad(s.n)).attr("fill", s => genreColor(s.g)).attr("fill-opacity", 0.85)
+    .attr("stroke", "#09090b").attr("stroke-width", 0.8)
+    .attr("cx", s => (waiting ? 0 : pos(s)[0])).attr("cy", s => (waiting ? 0 : pos(s)[1]));
+  if (waiting) {
+    dots.attr("opacity", 0);
+    revealOnView("seasons", root, () => dots.transition().delay(s => s.r * 900).duration(1100).ease(d3.easeCubicOut)
+      .attr("opacity", 1).attr("cx", s => pos(s)[0]).attr("cy", s => pos(s)[1]));
+  }
+  /* Label the most seasonal songs that came back over several years. */
+  const labelled = S.filter(s => s.yrs >= 3).sort((a, b) => b.r * Math.sqrt(b.n) - a.r * Math.sqrt(a.n)).slice(0, size < 420 ? 3 : 7);
+  const spots = labelled.map(s => {
+    const [px, py] = pos(s), right = px >= 0, text = s.t.length > 26 ? `${s.t.slice(0, 25)}…` : s.t, w = text.length * 6.6;
+    const lx = right ? px + rad(s.n) + 4 : px - rad(s.n) - 4;
+    return { s, px, py, lx, right, text, box: { x0: right ? lx : lx - w, x1: right ? lx + w : lx, y0: py - 8, y1: py + 8 } };
+  }).filter(p => p.box.x0 > 4 - cx && p.box.x1 < W - cx - 4); // never cut off by the screen edge
+  const labels = g.append("g").style("pointer-events", "none").style("opacity", waiting ? 0 : 1);
+  placeWithoutOverlap(spots, p => p.box).forEach(p => {
+    labels.append("text").attr("x", p.lx).attr("y", p.py + 4).attr("text-anchor", p.right ? "start" : "end").style("fill", "var(--ink)").style("font-size", "12px").style("font-weight", 600)
+      .attr("paint-order", "stroke").attr("stroke", "#09090b").attr("stroke-width", 3).text(p.text);
+  });
+  if (waiting) revealOnView("seasons-labels", root, () => labels.transition().delay(MOTION_MS + 400).duration(400).style("opacity", 1));
+  const isolate = () => dots.attr("opacity", s => (seasons.isolated === null || s.g === seasons.isolated ? 1 : 0.1));
+  const legend = document.getElementById("season-legend");
+  legend.innerHTML = D.genres.genres.map((name, k) => `<li><button type="button" data-g="${k}" aria-pressed="${seasons.isolated === k}"><i style="background:${genreColor(k)}"></i>${esc(name)}</button></li>`).join("") +
+    `<li><i style="background:${OTHER}"></i>Other</li>`;
+  legend.querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
+    const k = +b.dataset.g; seasons.isolated = seasons.isolated === k ? null : k;
+    legend.querySelectorAll("button").forEach(o => o.setAttribute("aria-pressed", String(+o.dataset.g === seasons.isolated)));
+    isolate();
+  }));
+  if (!waiting) isolate();
+  const show = (event, s) => {
+    dots.attr("stroke", o => (o === s ? "var(--ink)" : "#09090b")).attr("stroke-width", o => (o === s ? 2 : 0.8));
+    showTip(event, `<b>${esc(s.t)}</b>${esc(s.a)}<br>Peaks in ${monthFull(s.doy)}; ${s.n} plays over ${s.yrs} years<br><span class="k">${s.r > 0.6 ? "Strongly seasonal" : s.r > 0.3 ? "Leans to one season" : "Plays all year"}</span>`);
   };
-  const clear = () => { dots.attr("opacity", 1).attr("stroke", "#09090b").attr("stroke-width", 1); hideTip(); };
-  dots.on("pointermove", show).on("pointerleave", clear);
-  keyboardTour(svg, dots, show, clear);
-  const low = arts[0], high = arts.at(-1), sameish = Math.abs(K.mode.shuffle - K.mode.chosen) < 0.01;
-  if (sameish) headline("skip-title")`Shuffle or not, I skip ${N(pct(K.overall))} of the songs I start.`;
-  else headline("skip-title")`I skip ${N(pct(K.overall))} of songs: ${pct1(K.mode.shuffle)} on shuffle, ${pct1(K.mode.chosen)} when I pick.`;
-  setText("skip-sub", `${low.name} is the artist I skip least (${pct1(low.rate)}), ${high.name} the most (${pct1(high.rate)}). ` +
-    `Each bubble is an artist with at least ${K.minPlays} plays, sized by plays; further left means I let the songs play.`);
-  setText("skip-how", `A skip is any play shorter than ${D.meta.skipMs / 1000} seconds, the same threshold Spotify uses to count a stream. ` +
-    `Spotify's own "skipped" flag is missing for 2021, so duration is the only measure that is consistent across all years.`);
+  const clear = () => { dots.attr("stroke", "#09090b").attr("stroke-width", 0.8); hideTip(); };
+  const delaunay = d3.Delaunay.from(S, s => cx + pos(s)[0], s => cy + pos(s)[1]);
+  svg.on("pointermove", event => {
+    const [mx, my] = d3.pointer(event, svg.node()), s = S[delaunay.find(mx, my)], [px, py] = pos(s);
+    if (Math.hypot(cx + px - mx, cy + py - my) > 16) { clear(); return; }
+    show(event, s);
+  }).on("pointerleave", clear);
+  keyboardTour(svg, dots.filter(s => labelled.includes(s)), show, clear);
+  const best = S.filter(s => s.yrs >= 4).reduce((a, b) => (b.r > a.r ? b : a));
+  headline("season-title")`“${best.t}” comes back every ${monthFull(best.doy)}: ${N(`${best.yrs} years`)}, always the same season.`;
 }
 
 /* ================= 7. Travel map ================= */
-const travel = { view: null }; // null until the visitor picks; phones then start in Europe
+const travel = { selected: 170, transform: null }; // Colombia open by default, so the panel is never empty
+const MAP_VIEWS = {
+  world: null,
+  europe: [[-11, 35], [32, 61]],
+  americas: [[-118, -38], [-34, 34]],
+};
+const MAP_MAX_ZOOM = 14;
 function drawTravel() {
   const root = document.getElementById("travel");
   root.innerHTML = "";
-  const W = widthOf(root), H = heightOf(root, Math.round(widthOf(root) * 0.62)), inset = insetOf(); // phones: map height follows its width
+  const phone = isPhone(), W = widthOf(root), H = heightOf(root, Math.round(widthOf(root) * 0.7)), inset = insetOf();
   const byId = new Map(D.travel.map(t => [t.id, t]));
-  const world = window.WORLD, home = world.features.find(f => +f.id === byId.get(724)?.id);
-  const visited = world.features.filter(f => byId.has(+f.id));
-  const europe = { type: "FeatureCollection", features: visited.filter(f => { const [lon, lat] = d3.geoCentroid(f); return lon > -25 && lon < 40 && lat > 34; }) };
-  const projection = d3.geoNaturalEarth1();
-  const fit = view => { projection.fitExtent([[inset, 36], [W - inset, H - 12]], view === "europe" ? europe : world); return [projection.scale(), projection.translate()]; };
-  const view = travel.view ?? (isPhone() ? "europe" : "world");
-  fit(view);
+  const world = window.WORLD, visited = world.features.filter(f => byId.has(+f.id));
+  const projection = d3.geoNaturalEarth1().fitExtent([[inset, 8], [W - inset, H - 8]], { type: "Sphere" });
   const path = d3.geoPath(projection);
-  const hours = d3.scaleSequentialLog(d3.interpolateRgbBasis(HEAT.slice(1))).domain(d3.extent(D.travel, t => t.hours));
-  const width = d3.scaleSqrt().domain([0, d3.max(D.travel.filter(t => t.cc !== "ES"), t => t.hours)]).range([0.8, 7]);
+  const color = d3.scaleSequentialLog(d3.interpolateRgbBasis(MAP_RAMP)).domain(d3.extent(D.travel, t => t.hours));
+  const width = d3.scaleSqrt().domain([0, d3.max(D.travel.filter(t => t.cc !== "ES"), t => t.hours)]).range([0.8, 6]);
   const svg = d3.select(root).append("svg").attr("width", W).attr("height", H).attr("role", "img")
-    .attr("aria-label", "World map of countries where I listened, with arcs from Spain sized by hours")
-    .style("overflow", "hidden"); // zoomed views must not paint outside the chart
-  const bar = d3.select(root).insert("div", "svg").attr("class", "map-zoom");
-  bar.append("span").text("Zoom to");
-  const switcher = bar.append("div").attr("class", "view-switch").attr("role", "group").attr("aria-label", "Map zoom");
-  ["world", "europe"].forEach(v => switcher.append("button").attr("type", "button").attr("aria-pressed", String(view === v)).text(v === "world" ? "World" : "Europe")
-    .on("click", () => { if ((travel.view ?? view) === v) return; travel.view = v; switcher.selectAll("button").attr("aria-pressed", function () { return String(this.textContent.toLowerCase() === v); }); flyTo(v); }));
-  const sphere = svg.append("path").datum({ type: "Sphere" }).attr("fill", "#0e0e12").attr("stroke", "#1b1b20");
-  const lands = svg.append("g").selectAll("path").data(world.features).join("path")
-    .attr("fill", f => (byId.has(+f.id) ? hours(byId.get(+f.id).hours) : "#16161b")).attr("stroke", "#09090b").attr("stroke-width", 0.5);
-  const origin = d3.geoCentroid(home);
+    .attr("aria-label", "World map of countries where I listened, with arcs from Spain coloured and sized by hours").style("overflow", "hidden").style("touch-action", "pan-y");
+  const view = svg.append("g");
+  view.append("path").datum({ type: "Sphere" }).attr("d", path).attr("fill", "#0e0e12").attr("stroke", "#1b1b20").attr("vector-effect", "non-scaling-stroke");
+  view.append("path").datum(d3.geoGraticule10()).attr("d", path).attr("fill", "none").attr("stroke", "#15151a").attr("vector-effect", "non-scaling-stroke");
+  const lands = view.append("g").selectAll("path").data(world.features).join("path").attr("d", path)
+    .attr("fill", f => (byId.has(+f.id) ? color(byId.get(+f.id).hours) : "#1a1a20")).attr("stroke", "#09090b").attr("stroke-width", 0.5)
+    .attr("vector-effect", "non-scaling-stroke").style("cursor", f => (byId.has(+f.id) ? "pointer" : "default"));
+  const home = world.features.find(f => +f.id === 724), origin = d3.geoCentroid(home);
   const trips = D.travel.filter(t => t.cc !== "ES").map(t => {
     const f = world.features.find(g => +g.id === t.id), dest = d3.geoCentroid(f), interp = d3.geoInterpolate(origin, dest);
     return { t, dest, line: { type: "LineString", coordinates: d3.range(0, 1.0001, 1 / 48).map(interp) } };
   });
-  const arcs = svg.append("g").selectAll("path").data(trips).join("path").attr("fill", "none").attr("stroke", NEUTRAL_HI).attr("stroke-opacity", 0.7)
-    .attr("stroke-width", d => width(d.t.hours)).attr("stroke-linecap", "round").style("pointer-events", "none");
-  const pins = svg.append("g").selectAll("circle").data(trips).join("circle").attr("r", d => 2 + width(d.t.hours) * 0.6).attr("fill", NEUTRAL_HI).style("pointer-events", "none");
-  const homePin = svg.append("circle").attr("r", 5).attr("fill", "var(--ink)").attr("class", "halo");
+  const arcs = view.append("g").style("pointer-events", "none").selectAll("path").data(trips).join("path").attr("d", d => path(d.line)).attr("fill", "none")
+    .attr("stroke", d => color(d.t.hours)).attr("stroke-width", d => width(d.t.hours)).attr("stroke-linecap", "round").attr("vector-effect", "non-scaling-stroke");
+  const flow = view.append("g").style("pointer-events", "none").selectAll("path").data(trips).join("path").attr("d", d => path(d.line)).attr("fill", "none")
+    .attr("class", "map-flow").attr("stroke", "#fff").attr("stroke-opacity", 0.55).attr("stroke-width", d => Math.max(0.8, width(d.t.hours) * 0.45)).attr("vector-effect", "non-scaling-stroke");
+  const pins = view.append("g").style("pointer-events", "none").selectAll("circle").data(trips).join("circle")
+    .attr("cx", d => projection(d.dest)[0]).attr("cy", d => projection(d.dest)[1]).attr("fill", d => color(d.t.hours));
+  const homePin = view.append("circle").attr("cx", projection(origin)[0]).attr("cy", projection(origin)[1]).attr("fill", "var(--ink)");
+  const outline = view.append("path").attr("fill", "none").attr("stroke", "var(--ink)").attr("stroke-width", 1.8).attr("vector-effect", "non-scaling-stroke").style("pointer-events", "none");
   const labels = svg.append("g").style("pointer-events", "none");
-  const labelled = D.travel.slice(0, isPhone() ? 3 : 10);
-  function place() {
-    sphere.attr("d", path); lands.attr("d", path); arcs.attr("d", d => path(d.line));
-    pins.attr("transform", d => `translate(${projection(d.dest)})`);
-    homePin.attr("transform", `translate(${projection(origin)})`);
-    /* Biggest countries first; a label that would overlap one already placed is dropped. */
-    const placed = [];
-    const shown = labelled.map(t => {
-      const [px, py] = projection(d3.geoCentroid(world.features.find(g => +g.id === t.id)));
-      const w = (t.name.length + 8) * 6.6;
-      // Spain is where every arc starts, so its label sits below-left of the origin pin.
-      return t.cc === "ES" ? { t, px: px - w - 6, py: py + 20, w } : { t, px: px + 8, py: py - 8, w };
-    }).filter(l => {
-      const hit = l.px < 0 || l.px + l.w > W || l.py < 30 || l.py > H || placed.some(p => l.px < p.px + p.w && l.px + l.w > p.px && Math.abs(l.py - p.py) < 16);
-      if (!hit) placed.push(l);
-      return !hit;
-    });
-    labels.selectAll("text").data(shown, l => l.t.cc).join("text").attr("transform", l => `translate(${l.px},${l.py})`)
-      .style("fill", "var(--ink)").style("font-size", "12px").style("font-weight", 600).attr("paint-order", "stroke").attr("stroke", "#09090b").attr("stroke-width", 3)
-      .text(l => `${l.t.name} · ${fmtH(l.t.hours)} h`);
+  const labelled = D.travel.slice(0, phone ? 5 : 12).map(t => ({ t, at: projection(d3.geoCentroid(world.features.find(g => +g.id === t.id))) }));
+  /* Labels live outside the zoomed group so their text stays the same size; they re-place on every zoom. */
+  function placeLabels(k) {
+    const tr = travel.transform ?? d3.zoomIdentity;
+    const items = labelled.map(l => {
+      const [px, py] = tr.apply(l.at), text = `${l.t.name} · ${fmtH(l.t.hours)} h`, w = text.length * 6.6;
+      return l.t.cc === "ES" ? { l, text, x: px - w - 8, y: py + 18, w } : { l, text, x: px + 8, y: py - 6, w };
+    }).filter(i => i.x > 0 && i.x + i.w < W && i.y > 14 && i.y < H - 4);
+    const shown = placeWithoutOverlap(items, i => ({ x0: i.x, x1: i.x + i.w, y0: i.y - 12, y1: i.y + 4 }));
+    labels.selectAll("text").data(shown, i => i.l.t.cc).join("text").attr("x", i => i.x).attr("y", i => i.y)
+      .style("fill", "var(--ink)").style("font-size", "12px").style("font-weight", 600).attr("paint-order", "stroke").attr("stroke", "#09090b").attr("stroke-width", 3).text(i => i.text);
+    pins.attr("r", d => (2 + width(d.t.hours) * 0.6) / k); // the group is scaled by k, so divide to keep pins a fixed size
+    homePin.attr("r", 5 / k);
   }
-  function flyTo(view) {
-    const from = [projection.scale(), projection.translate()], to = fit(view);
-    const s = d3.interpolate(from[0], to[0]), tr = d3.interpolate(from[1], to[1]);
-    if (REDUCED) { place(); return; }
-    svg.transition().duration(1000).ease(d3.easeCubicInOut).tween("fly", () => t => { projection.scale(s(t)).translate(tr(t)); place(); });
+  const zoom = d3.zoom().scaleExtent([1, MAP_MAX_ZOOM]).translateExtent([[0, 0], [W, H]])
+    .filter(event => (event.type === "wheel" ? event.ctrlKey || event.metaKey : event.type === "touchstart" ? event.touches.length > 1 : !event.button))
+    .on("zoom", event => { travel.transform = event.transform; view.attr("transform", event.transform); placeLabels(event.transform.k); });
+  svg.call(zoom).on("dblclick.zoom", null);
+  const boundsOf = box => {
+    if (!box) return d3.zoomIdentity;
+    const [[x0, y0], [x1, y1]] = [projection(box[0]), projection(box[1])].map(p => p).reduce((acc, p) => [[Math.min(acc[0][0], p[0]), Math.min(acc[0][1], p[1])], [Math.max(acc[1][0], p[0]), Math.max(acc[1][1], p[1])]], [[Infinity, Infinity], [-Infinity, -Infinity]]);
+    const k = Math.min(MAP_MAX_ZOOM, 0.92 / Math.max((x1 - x0) / W, (y1 - y0) / H));
+    return d3.zoomIdentity.translate(W / 2, H / 2).scale(k).translate(-(x0 + x1) / 2, -(y0 + y1) / 2);
+  };
+  const go = target => svg.transition().duration(REDUCED ? 0 : 900).ease(d3.easeCubicInOut).call(zoom.transform, target);
+  /* Controls: preset views plus zoom in, out and reset. */
+  const bar = d3.select(root).insert("div", "svg").attr("class", "map-zoom");
+  const presets = bar.append("div").attr("class", "view-switch").attr("role", "group").attr("aria-label", "Map view");
+  Object.keys(MAP_VIEWS).forEach(v => presets.append("button").attr("type", "button").attr("aria-pressed", "false").text(v[0].toUpperCase() + v.slice(1))
+    .on("click", function () { presets.selectAll("button").attr("aria-pressed", "false"); d3.select(this).attr("aria-pressed", "true"); go(boundsOf(MAP_VIEWS[v])); }));
+  const zooms = bar.append("div").attr("class", "zoom-buttons").attr("role", "group").attr("aria-label", "Zoom");
+  [["+", "Zoom in", 1.8], ["−", "Zoom out", 1 / 1.8]].forEach(([label, aria, f]) => zooms.append("button").attr("type", "button").attr("aria-label", aria).text(label)
+    .on("click", () => svg.transition().duration(REDUCED ? 0 : 400).call(zoom.scaleBy, f)));
+  const panel = d3.select(root).append("aside").attr("class", "country-panel").attr("aria-live", "polite");
+  function select(id) {
+    const t = byId.get(id);
+    if (!t) return;
+    travel.selected = id;
+    const f = world.features.find(g => +g.id === id);
+    outline.attr("d", path(f));
+    const maxA = d3.max(t.artists, a => a[1]), maxS = d3.max(t.songs, s => s[2]) || 1;
+    panel.html(`<h3><i style="background:${color(t.hours)}"></i>${esc(t.name)}</h3><p class="k">${fmtH(t.hours)} hours · ${fmt(t.plays)} plays</p>` +
+      `<h4>Top artists</h4><ol>${t.artists.map(([a, n]) => `<li><span>${esc(a)}</span><b>${fmt(n)}</b><em style="width:${(100 * n) / maxA}%;background:${color(t.hours)}"></em></li>`).join("")}</ol>` +
+      `<h4>Top songs</h4><ol>${t.songs.map(([s, a, n]) => `<li><span>${esc(s)}<small>${esc(a)}</small></span><b>${fmt(n)}</b><em style="width:${(100 * n) / maxS}%;background:${color(t.hours)}"></em></li>`).join("")}</ol>`);
   }
-  place();
+  select(travel.selected);
+  lands.on("click", (_, f) => { if (byId.has(+f.id)) select(+f.id); })
+    .on("pointermove", (event, f) => { const t = byId.get(+f.id); if (t) showTip(event, `<b>${esc(t.name)}</b>${fmtH(t.hours)} hours<br><span class="k">Click for top artists and songs</span>`); else hideTip(); })
+    .on("pointerleave", hideTip);
+  const order = new Map(D.travel.map((t, i) => [t.id, i]));
+  keyboardTour(svg, lands.filter(f => byId.has(+f.id)).sort((a, b) => order.get(+a.id) - order.get(+b.id)), (_, f) => select(+f.id), () => {});
+  if (travel.transform) svg.call(zoom.transform, travel.transform);
+  else if (phone) svg.call(zoom.transform, boundsOf(MAP_VIEWS.europe));
+  else placeLabels(1);
   if (isWaiting("travel")) {
     arcs.attr("stroke-dasharray", function () { const l = this.getTotalLength(); return `${l} ${l}`; }).attr("stroke-dashoffset", function () { return this.getTotalLength(); });
-    pins.attr("opacity", 0);
+    pins.attr("opacity", 0); flow.attr("opacity", 0);
     revealOnView("travel", root, () => {
-      arcs.transition().delay((_, i) => i * 90).duration(1100).ease(d3.easeCubicInOut).attr("stroke-dashoffset", 0).on("end", function () { d3.select(this).attr("stroke-dasharray", null); });
-      pins.transition().delay((_, i) => i * 90 + 1000).duration(300).attr("opacity", 1);
+      arcs.transition().delay((_, i) => i * 80).duration(1100).ease(d3.easeCubicInOut).attr("stroke-dashoffset", 0).on("end", function () { d3.select(this).attr("stroke-dasharray", null); });
+      pins.transition().delay((_, i) => i * 80 + 1000).duration(300).attr("opacity", 1);
+      flow.transition().delay(2600).duration(600).attr("opacity", 1);
     });
   }
-  const show = (event, f, node) => {
-    const t = byId.get(+f.id);
-    if (!t) { hideTip(); return; }
-    lands.attr("stroke", "#09090b").attr("stroke-width", 0.5);
-    d3.select(node).attr("stroke", "var(--ink)").attr("stroke-width", 1.2).raise();
-    showTip(event, `<b>${esc(t.name)}</b>${fmtH(t.hours)} hours, ${fmt(t.plays)} plays<br>Top artist: ${esc(t.topArtist)}<br><span class="k">Top song: ${esc(t.topTrack)} (${esc(t.topTrackArtist)})</span>`);
-  };
-  const clear = () => { lands.attr("stroke", "#09090b").attr("stroke-width", 0.5); hideTip(); };
-  lands.on("pointermove", function (event, f) { show(event, f, this); }).on("pointerleave", clear);
-  /* Keyboard order follows hours, biggest first, the same order as the labels. */
-  const order = new Map(D.travel.map((t, i) => [t.id, i]));
-  keyboardTour(svg, lands.filter(f => byId.has(+f.id)).sort((a, b) => order.get(+a.id) - order.get(+b.id)), show, clear);
-  const total = d3.sum(D.travel, t => t.hours), abroad = total - (byId.get(724)?.hours ?? 0);
-  const second = D.travel[1];
+  /* The flowing dashes repaint the map every frame, so they only run while the map is on screen. */
+  if (travel.flowWatch) travel.flowWatch.disconnect();
+  travel.flowWatch = new IntersectionObserver(e => root.classList.toggle("flowing", e[0].isIntersecting && !REDUCED));
+  travel.flowWatch.observe(root);
+  const total = d3.sum(D.travel, t => t.hours), abroad = total - (byId.get(724)?.hours ?? 0), second = D.travel[1];
   headline("travel-title")`${N(pct(abroad / total))} of my listening happened outside Spain, across ${D.travel.length - 1} countries; ${second.name} comes second with ${fmtH(second.hours)} hours.`;
 }
 
-/* ================= 8. Discovery ================= */
-function drawDiscovery() {
-  const V = D.discovery, root = document.getElementById("discovery");
+/* ================= 8. Layer cake ================= */
+function drawCohorts() {
+  const C = D.cohorts, root = document.getElementById("cohorts");
   root.innerHTML = "";
   const W = widthOf(root), H = heightOf(root, 380), inset = insetOf();
-  const mid = (H - 28) * 0.56;
-  const x = d3.scaleBand().domain(d3.range(MONTHS.length)).range([0, W]).padding(0.18);
-  const xt = d3.scaleTime().domain([MONTHS[0], d3.timeMonth.offset(MONTHS.at(-1), 1)]).range([0, W]);
-  const up = d3.scaleLinear().domain([0, d3.max(V.newArtists)]).range([0, mid - 24]);
-  const down = d3.scaleLinear().domain([0, d3.max(V.oldShare) * 1.1]).range([0, H - 28 - mid - 6]);
+  const smooth = s => s.map((v, i) => ((s[i - 1] ?? v) + 2 * v + (s[i + 1] ?? v)) / 4);
+  const series = C.series.map(smooth);
+  const rows = MONTHS.map((_, m) => Object.fromEntries(series.map((s, k) => [k, s[m]])));
+  const stack = d3.stack().keys(series.map((_, k) => k))(rows);
+  const x = d3.scaleTime().domain(d3.extent(MONTHS)).range([0, W]);
+  const y = d3.scaleLinear().domain([0, d3.max(stack.at(-1), d => d[1]) * 1.05]).range([H - 30, 10]);
+  const area = d3.area().x((_, i) => x(MONTHS[i])).y0(d => y(d[0])).y1(d => y(d[1])).curve(d3.curveBasis);
   const svg = d3.select(root).append("svg").attr("width", W).attr("height", H).attr("role", "img")
-    .attr("aria-label", "Monthly new artists as bars above a centre line, and share of plays from long-known artists as an area below it");
-  yearTicks(svg, xt, H, inset);
-  const waiting = isWaiting("discovery");
-  /* The export ends mid-month, so the last month is partial: drawn faded and said in the tooltip. */
-  const lastDay = parseDay(D.meta.lastDay), lastIndex = MONTHS.length - 1;
-  const partial = i => i === lastIndex && lastDay.getDate() < d3.timeDay.count(MONTHS[i], d3.timeMonth.offset(MONTHS[i], 1));
-  const bars = svg.append("g").selectAll("rect").data(V.newArtists).join("rect").attr("x", (_, i) => x(i)).attr("width", x.bandwidth()).attr("rx", Math.min(3, x.bandwidth() / 2))
-    .attr("fill", NEUTRAL_HI).attr("fill-opacity", (_, i) => (partial(i) ? 0.35 : 1))
-    .attr("y", v => (waiting ? mid : mid - up(v))).attr("height", v => (waiting ? 0 : up(v)));
-  const share = V.oldShare.map(v => v ?? 0);
-  const area = d3.area().x((_, i) => x(i) + x.bandwidth() / 2).y0(mid + 3).y1(v => mid + 3 + down(v)).curve(d3.curveMonotoneX);
-  const clip = wipeClip(svg, "discovery-area", root, W, H);
-  svg.append("path").datum(share).attr("d", area).attr("fill", NEUTRAL_LO).attr("fill-opacity", 0.3).attr("stroke", NEUTRAL_LO).attr("stroke-width", 1.5).attr("clip-path", clip);
-  svg.append("line").attr("x1", 0).attr("x2", W).attr("y1", mid + 1.5).attr("y2", mid + 1.5).attr("stroke", "var(--axis)");
-  if (waiting) revealOnView("discovery", root, () => bars.transition().delay((_, i) => i * 14).duration(700).ease(d3.easeCubicOut).attr("y", v => mid - up(v)).attr("height", v => up(v)));
-  down.ticks(2).filter(v => v > 0).forEach(v => {
-    svg.append("line").attr("x1", 0).attr("x2", W).attr("y1", mid + 3 + down(v)).attr("y2", mid + 3 + down(v)).attr("stroke", "#232329").attr("stroke-dasharray", "2 4");
-    svg.append("text").attr("x", inset).attr("y", mid + 3 + down(v) - 4).style("fill", "var(--ink-2)").style("font-size", "12px")
-      .attr("paint-order", "stroke").attr("stroke", "#09090b").attr("stroke-width", 3).text(`${pct(v)} old friends`);
+    .attr("aria-label", "Stacked area of monthly hours, coloured by the year I first heard each artist");
+  yearTicks(svg, x, H, inset);
+  y.ticks(4).filter(v => v > 0).forEach(v => {
+    svg.append("line").attr("x1", 0).attr("x2", W).attr("y1", y(v)).attr("y2", y(v)).attr("stroke", "#1d1d22");
+    svg.append("text").attr("x", W - inset).attr("y", y(v) - 4).attr("text-anchor", "end").text(`${v} h`);
   });
-  const best = d3.maxIndex(V.newArtists);
-  svg.append("text").attr("x", Math.min(W - inset, Math.max(inset, x(best) + x.bandwidth() / 2))).attr("y", mid - up(V.newArtists[best]) - 8)
-    .attr("text-anchor", x(best) > W - 160 ? "end" : "middle").style("fill", "var(--ink)").style("font-weight", 600).text(`${V.newArtists[best]} new in ${monthName(MONTHS[best])}`);
-  const hit = svg.append("g").selectAll("rect").data(MONTHS).join("rect").attr("x", (_, i) => x(i) - x.step() * x.paddingInner() / 2).attr("width", x.step()).attr("y", 0).attr("height", H - 24).attr("fill", "transparent");
+  const label = c => (c === "before" ? "Known before 2021" : `Met in ${c}`);
+  const bands = svg.append("g").attr("clip-path", wipeClip(svg, "cohorts", root, W, H)).selectAll("path").data(stack).join("path").attr("d", area)
+    .attr("fill", (_, k) => COHORT_COLORS[k]).attr("stroke", "#09090b").attr("stroke-width", 0.6);
+  /* Each layer is named at its thickest month when the label fits inside it. */
+  const labels = svg.append("g").style("pointer-events", "none").style("opacity", isWaiting("cohort-labels") ? 0 : 1);
+  /* A spot counts only if the band holds the label along its whole width. */
+  const fits = (s, cx, cy, w) => MONTHS.every((mo, m) => { const mx = x(mo); return mx < cx - w / 2 || mx > cx + w / 2 || (y(s[m][1]) < cy - 9 && y(s[m][0]) > cy + 9); });
+  const spots = stack.map((s, k) => {
+    const w = label(C.cohorts[k]).length * 7.2 + 8;
+    const tries = d3.range(MONTHS.length).sort((a, b) => (s[b][1] - s[b][0]) - (s[a][1] - s[a][0])).slice(0, 16);
+    for (const i of tries) {
+      const cx = Math.min(W - inset - w / 2, Math.max(inset + w / 2, x(MONTHS[i]))), cy = y((s[i][0] + s[i][1]) / 2);
+      if (fits(s, cx, cy, w)) return { k, cx, cy, w };
+    }
+    return null;
+  }).filter(Boolean);
+  placeWithoutOverlap(spots, p => ({ x0: p.cx - p.w / 2, x1: p.cx + p.w / 2, y0: p.cy - 9, y1: p.cy + 9 })).forEach(p => {
+    labelOn(labels.append("text").attr("x", p.cx).attr("y", p.cy + 4).attr("text-anchor", "middle").text(label(C.cohorts[p.k])), p.k === 0 ? OTHER : COHORT_COLORS[p.k]);
+  });
+  if (isWaiting("cohort-labels")) revealOnView("cohort-labels", root, () => labels.transition().delay(MOTION_MS).duration(400).style("opacity", 1));
+  const guide = svg.append("line").attr("y1", 0).attr("y2", H - 24).attr("stroke", "var(--ink)").attr("opacity", 0);
+  const step = W / (MONTHS.length - 1);
+  const hit = svg.append("g").selectAll("rect").data(MONTHS).join("rect").attr("x", m => x(m) - step / 2).attr("width", step).attr("y", 0).attr("height", H - 24).attr("fill", "transparent");
   const show = (event, m) => {
-    const i = MONTHS.indexOf(m);
-    bars.attr("opacity", (_, j) => (j === i ? 1 : 0.35));
-    showTip(event, `<b>${monthName(m)}${partial(i) ? ` (to ${longDay(lastDay)})` : ""}</b>${V.newArtists[i]} artists heard for the first time<br>${V.oldShare[i] == null ? "No plays" : `${pct(V.oldShare[i])} of ${fmt(V.plays[i])} plays went to artists known for over a year`}`);
+    const i = MONTHS.indexOf(m), total = d3.sum(C.series, s => s[i]);
+    guide.attr("x1", x(m)).attr("x2", x(m)).attr("opacity", 0.6);
+    const parts = C.cohorts.map((c, k) => [c, k, C.series[k][i]]).filter(p => p[2] > 0.05).reverse();
+    showTip(event, `<b>${monthName(m)}</b>${fmtH(total)} hours<br>` + parts.map(([c, k, v]) => `<span style="color:${COHORT_COLORS[k]}">■</span> ${label(c)}: ${pct(v / total)}`).join("<br>"));
   };
-  const clear = () => { bars.attr("opacity", 1); hideTip(); };
+  const clear = () => { guide.attr("opacity", 0); hideTip(); };
   hit.on("pointermove", show).on("pointerleave", clear);
   keyboardTour(svg, hit, show, clear);
-  setLegend("disc-legend", [["New artists that month (up)", NEUTRAL_HI], [`Share of plays from artists known over ${V.oldFriendDays} days (down)`, NEUTRAL_LO]]);
-  const total = d3.sum(V.newArtists);
-  headline("disc-title")`I met ${N(fmt(total))} new artists since ${MONTHS[0].getFullYear()}; ${monthName(MONTHS[best])} alone brought ${V.newArtists[best]}.`;
-  setText("disc-sub", "Bars rise with the artists I played for the very first time each month. The area below grows when I went back to artists I had known for over a year: explorer months push up, comfort months pull down.");
+  setLegend("cohort-legend", C.cohorts.map((c, k) => [esc(c === "before" ? "Known before 2021" : `${c} · ${fmt(C.met[c] ?? 0)} new artists`), COHORT_COLORS[k]]));
+  const lastYear = String(LAST_DAY.getFullYear()), idx = MONTHS.map((m, i) => [m, i]).filter(([m]) => String(m.getFullYear()) === lastYear).map(([, i]) => i);
+  const yearTotal = d3.sum(idx, i => d3.sum(C.series, s => s[i]));
+  const oldK = C.cohorts.map((c, k) => [c, k]).filter(([c]) => c === "before" || +c <= 2022).map(([, k]) => k);
+  const oldShare = d3.sum(idx, i => d3.sum(oldK, k => C.series[k][i])) / yearTotal;
+  const newShare = d3.sum(idx, i => C.series[C.cohorts.indexOf(lastYear)][i]) / yearTotal;
+  headline("cohort-title")`${N(pct(oldShare))} of my ${lastYear} listening still goes to artists I met before 2023.`;
+  setText("cohort-sub", `Monthly hours, coloured by the year I first heard each artist. Every year adds a layer; artists I met in ${lastYear} take ${pct(newShare)} of it so far.`);
 }
 
 /* ================= Ending ================= */
 function drawEnding() {
-  const m = D.meta, binge = D.obsessions[0];
-  headline("end-title")`${N(fmt(m.plays))} plays, ${fmt(m.artists)} artists, ${D.travel.length} countries, and one song ${binge.peak} times in a week.`;
-  setText("method-note", `${fmt(m.plays)} music plays, ${fmt(m.artists)} artists and ${fmt(m.tracks)} songs, ${longDay(FIRST_DAY)} to ${longDay(parseDay(m.lastDay))}. ` +
-    "Earlier logs exist but are sparse, so the story starts in May 2021. Hours are time actually played; podcasts and video are left out. " +
-    "Artist first plays use the full history back to 2014, so 2021's discovery numbers are slightly inflated. " +
-    "Only aggregates are published: no raw plays, no IP addresses, no exact timestamps.");
+  const m = D.meta, birthday = D.stories.find(s => s.kind === "birthday");
+  const tail = birthday ? "and one song I only play on birthdays." : `and ${D.stories.length} songs with a story.`;
+  headline("end-title")`${N(fmt(m.plays))} plays, ${fmt(m.artists)} artists, ${D.travel.length} countries, ${tail}`;
+  setText("method-note", `${fmt(m.plays)} music plays, ${fmt(m.artists)} artists and ${fmt(m.tracks)} songs, ${longDay(FIRST_DAY)} to ${longDay(LAST_DAY)}. ` +
+    "Earlier logs exist but are sparse, so the story starts in May 2021; first plays use the full history back to 2014. Hours are time actually played; podcasts and video are left out. " +
+    `Story songs are found by rules over plays of 30 seconds or more; genres are tagged by hand for the top ${D.genres.artists.length} artists. ` +
+    "Only aggregates are published: no raw plays, no IP addresses, nothing finer than a day.");
   document.getElementById("to-start").addEventListener("click", () => {
     document.getElementById("s-hero").scrollIntoView({ behavior: REDUCED ? "auto" : "smooth" });
   });
@@ -706,7 +899,7 @@ function trackProgress() {
   update();
 }
 
-const drawCharts = () => { drawRiver(); drawRace(); drawObsessions(); drawSpotlight(); drawClock(); drawSkips(); drawTravel(); drawDiscovery(); };
+const drawCharts = () => { drawRiver(); drawRace(); drawStories(); drawRank(); drawGenres(); drawSeasons(); drawTravel(); drawCohorts(); };
 drawHero();
 drawEnding();
 trackProgress();
