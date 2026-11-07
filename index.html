@@ -39,6 +39,7 @@
     <button id="race-play" type="button" aria-label="Pause race" aria-pressed="true"></button>
     <input id="race-scrub" type="range" min="0" step="0.01" value="0" aria-label="Race month">
     <output id="race-label" for="race-scrub"></output>
+    <span id="race-note" class="race-note" aria-live="polite"></span>
   </div>
   <div id="race" class="fill"></div>
 </section>
@@ -86,14 +87,14 @@
 
 <section class="screen ending" id="s-method">
   <div class="wrap"><div class="head"><h2 id="end-title"></h2>
-    <p class="sub">I'm Renzo, a data scientist who teaches data analytics. Everything above comes from my own Spotify export, processed on my laptop and turned into one finding per screen.</p></div></div>
+    <p class="lede end-intro">I'm Renzo, a data scientist who teaches data analytics. Everything above comes from my own Spotify export, processed on my laptop and turned into one finding per screen.</p></div></div>
   <div class="wrap"><nav class="contact" aria-label="Contact and source">
     <a href="https://www.linkedin.com/in/renzorico" rel="noopener">LinkedIn</a>
     <a href="https://github.com/renzorico" rel="noopener">GitHub</a>
     <a href="https://github.com/renzorico/spotify-story" rel="noopener">This page's code</a>
     <button type="button" id="to-start" class="quiet">Back to the start</button>
   </nav></div>
-  <div class="wrap rail">
+  <div class="wrap"><details class="how pipeline-box"><summary>How it was made, in six steps</summary>
     <ol class="pipeline compact">
       <li><b>Request</b>Extended streaming history from Spotify.</li>
       <li><b>Load</b>JSON into DuckDB, music only, 2021 to 2026.</li>
@@ -102,7 +103,7 @@
       <li><b>Aggregate</b>By month, week, hour, artist and country.</li>
       <li><b>Render</b>D3 in the browser, no network calls.</li>
     </ol>
-  </div>
+  </details></div>
   <div class="wrap"><div class="endnote"><p id="method-note"></p><footer>Personal data, my own account. Built with Claude Code.</footer></div></div>
 </section>
 

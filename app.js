@@ -32,6 +32,16 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;"
 const colorOf = name => { const i = D.artists.indexOf(name); return i >= 0 ? SLOTS[i] : OTHER; };
 const isTop = name => D.artists.includes(name);
 const setText = (id, text) => { document.getElementById(id).textContent = text; };
+/* Headlines: plain text, with the one key number wrapped so it carries the accent, as in the hero.
+   Usage: headline("id")`text ${N(number)} text`; only values wrapped in N() are highlighted. */
+const N = value => ({ num: String(value) });
+const headline = id => (strings, ...values) => {
+  document.getElementById(id).innerHTML = strings.reduce((html, part, i) => {
+    if (i >= values.length) return html + esc(part);
+    const v = values[i];
+    return html + esc(part) + (v && v.num !== undefined ? `<span class="num">${esc(v.num)}</span>` : esc(v));
+  }, "");
+};
 const isPhone = () => innerWidth < 600;
 /* Labels on fills: dark text on neon, white with a halo on grey. */
 function labelOn(sel, fill) {
@@ -171,11 +181,21 @@ function drawRiver() {
   if (W >= 700) {
     /* Every band is named on the chart at its thickest month, unless that spot is taken. */
     const labels = svg.append("g").style("opacity", isWaiting("river-labels") ? 0 : 1).style("pointer-events", "none");
+    /* For each band, try its thickest months in turn; a spot counts only if the label stays inside
+       its own band along its whole width, so it never spills onto a neighbour. */
+    const fitsInBand = (s, cx, cy, w) => MONTHS.every((mo, m) => {
+      const mx = x(mo);
+      return mx < cx - w / 2 || mx > cx + w / 2 || (y(s[m][1]) < cy - 8 && y(s[m][0]) > cy + 8);
+    });
     const spots = stack.map((s, k) => {
-      const i = d3.maxIndex(s, d => d[1] - d[0]);
       const w = D.artists[k].length * 7.6 + 8;
-      return { k, cx: Math.min(W - inset - w / 2, Math.max(inset + w / 2, x(MONTHS[i]))), cy: y((s[i][0] + s[i][1]) / 2), w, thick: y(s[i][0]) - y(s[i][1]) };
-    }).filter(p => p.thick >= 16).sort((a, b) => b.thick - a.thick);
+      const tries = d3.range(MONTHS.length).sort((a, b) => (s[b][1] - s[b][0]) - (s[a][1] - s[a][0])).slice(0, 12);
+      for (const i of tries) {
+        const cx = Math.min(W - inset - w / 2, Math.max(inset + w / 2, x(MONTHS[i]))), cy = y((s[i][0] + s[i][1]) / 2);
+        if (fitsInBand(s, cx, cy, w)) return { k, cx, cy, w, thick: y(s[i][0]) - y(s[i][1]) };
+      }
+      return null;
+    }).filter(Boolean).sort((a, b) => b.thick - a.thick);
     placeWithoutOverlap(spots, p => ({ x0: p.cx - p.w / 2, x1: p.cx + p.w / 2, y0: p.cy - 9, y1: p.cy + 9 })).forEach(p => {
       labelOn(labels.append("text").attr("x", p.cx).attr("y", p.cy + 4).attr("text-anchor", "middle").text(D.artists[p.k]), SLOTS[p.k]);
     });
@@ -184,39 +204,38 @@ function drawRiver() {
   setLegend("river-legend", D.artists.map((a, k) => [esc(a), SLOTS[k]]));
   let best = { v: 0 };
   D.river.series.forEach((s, k) => s.forEach((v, m) => { if (v > best.v) best = { v, k, m }; }));
-  setText("river-title", `${D.artists[best.k]} hit ${fmtH(best.v)} hours in ${monthName(MONTHS[best.m])}: no artist ever had a bigger month.`);
+  headline("river-title")`${D.artists[best.k]} hit ${N(`${fmtH(best.v)} hours`)} in ${monthName(MONTHS[best.m])}: no artist ever had a bigger month.`;
 }
 
 /* ================= 2. Bar chart race ================= */
 const race = { f: 0, playing: true, timer: null, started: false, render: null };
-const RACE_BARS = 10, RACE_MONTH_MS = 380;
+const RACE_BARS = 10, RACE_BARS_PHONE = 6, RACE_MONTH_MS = 380;
 function drawRace() {
   const root = document.getElementById("race");
   root.innerHTML = "";
-  const W = widthOf(root), H = heightOf(root, 420), inset = insetOf();
+  const W = widthOf(root), H = heightOf(root, 360), inset = insetOf();
+  const nBars = isPhone() ? RACE_BARS_PHONE : RACE_BARS;
   const { names, cum } = D.race, last = MONTHS.length - 1;
   const svg = d3.select(root).append("svg").attr("width", W).attr("height", H).attr("role", "img")
     .attr("aria-label", "Animated bar chart race of cumulative listening hours per artist");
   const watermark = svg.append("text").attr("class", "race-month").attr("x", W - inset).attr("y", H - 16).attr("text-anchor", "end");
-  const rowH = (H - 24) / RACE_BARS, barH = Math.max(14, rowH * 0.72);
+  const rowH = (H - 24) / nBars, barH = Math.max(14, rowH * 0.72);
   const left = inset, x = d3.scaleLinear().range([left, W - inset - 70]);
   const axis = svg.append("g");
-  svg.append("clipPath").attr("id", "race-clip").append("rect").attr("width", W).attr("height", H - 24); // hide bars sliding out below rank 10
+  svg.append("clipPath").attr("id", "race-clip").append("rect").attr("width", W).attr("height", H - 24); // hide bars sliding out below the last rank
   const bars = svg.append("g").attr("clip-path", "url(#race-clip)");
   const rankAt = i => { const order = d3.range(names.length).sort((a, b) => cum[b][i] - cum[a][i]); const r = []; order.forEach((k, pos) => { r[k] = pos; }); return r; };
   const ranks = MONTHS.map((_, i) => rankAt(i));
-  /* The month the final leader took first place for good: the title's claim, marked on the chart. */
+  /* The month the final leader took first place for good: the title's claim, said beside the slider. */
   const leader = d3.range(names.length).sort((a, b) => cum[b][last] - cum[a][last])[0];
   let since = 0;
   for (let i = last; i >= 0; i--) if (ranks[i][leader] !== 0) { since = i + 1; break; }
   const before = since > 0 ? names[ranks[since - 1].indexOf(0)] : null;
-  const callout = svg.append("text").attr("x", W - inset).attr("y", rowH / 2).attr("dy", "0.35em").attr("text-anchor", "end")
-    .style("fill", "var(--ink)").style("font-size", "13px").style("font-weight", 600)
-    .attr("paint-order", "stroke").attr("stroke", "#09090b").attr("stroke-width", 4);
+  const scrub = document.getElementById("race-scrub");
   function render(f) {
-    const i0 = Math.floor(f), i1 = Math.min(last, i0 + 1), t = f - i0;
+    const i0 = Math.floor(f), i1 = Math.min(last, i0 + 1), t = f - i0, month = monthName(MONTHS[Math.round(f)]);
     const items = names.map((name, k) => ({ name, k, v: cum[k][i0] * (1 - t) + cum[k][i1] * t, r: ranks[i0][k] * (1 - t) + ranks[i1][k] * t }))
-      .filter(d => d.r < RACE_BARS + 0.6);
+      .filter(d => d.r < nBars + 0.6);
     x.domain([0, Math.max(1, d3.max(items, d => d.v)) * 1.02]);
     const ticks = x.ticks(isPhone() ? 3 : 6).filter(v => v > 0);
     axis.selectAll("line").data(ticks).join("line").attr("x1", x).attr("x2", x).attr("y1", 0).attr("y2", H - 24).attr("stroke", "#232329");
@@ -228,7 +247,7 @@ function drawRace() {
       e.append("text").attr("class", "val").attr("dy", "0.35em").style("fill", "var(--ink)").style("font-size", "13px").style("font-weight", 600);
       return e;
     });
-    g.attr("transform", d => `translate(0,${d.r * rowH + (rowH - barH) / 2})`).attr("opacity", d => Math.max(0, Math.min(1, RACE_BARS + 0.6 - d.r)));
+    g.attr("transform", d => `translate(0,${d.r * rowH + (rowH - barH) / 2})`).attr("opacity", d => Math.max(0, Math.min(1, nBars + 0.6 - d.r)));
     g.select("rect").attr("x", left).attr("height", barH).attr("width", d => Math.max(2, x(d.v) - left)).attr("fill", d => colorOf(d.name));
     g.select("text.name").attr("y", barH / 2).each(function (d) {
       const fits = x(d.v) - left > d.name.length * 7.4 + 16;
@@ -239,30 +258,32 @@ function drawRace() {
       const fits = x(d.v) - left > d.name.length * 7.4 + 16;
       d3.select(this).attr("x", fits ? x(d.v) + 8 : x(d.v) + 18 + d.name.length * 7.4).text(fmt(Math.round(d.v)));
     });
-    g.on("pointermove", (event, d) => showTip(event, `<b>${esc(d.name)}</b>${fmt(Math.round(d.v))} hours by ${monthName(MONTHS[Math.round(f)])}`)).on("pointerleave", hideTip);
-    callout.text(before && f >= since && !isPhone() ? `${names[leader]} takes #1 in ${monthName(MONTHS[since])}` : "");
-    watermark.text(monthName(MONTHS[Math.round(f)]));
-    setText("race-label", monthName(MONTHS[Math.round(f)]));
-    document.getElementById("race-scrub").value = f;
+    g.on("pointermove", (event, d) => showTip(event, `<b>${esc(d.name)}</b>${fmt(Math.round(d.v))} hours by ${month}`)).on("pointerleave", hideTip);
+    setText("race-note", before && f >= since ? `${names[leader]} takes #1 in ${monthName(MONTHS[since])}` : "");
+    watermark.text(month);
+    setText("race-label", month);
+    scrub.value = f;
+    scrub.setAttribute("aria-valuetext", month);
   }
   race.render = render;
-  const scrub = document.getElementById("race-scrub");
   scrub.max = last;
   if (REDUCED && !race.started) { race.f = last; race.playing = false; }
   render(race.f);
   setPlayButton();
   if (!race.started) revealOnView("race", root, () => { race.started = true; if (race.playing) playRace(); });
-  setText("race-title", before
-    ? `${names[leader]} passed ${before} in ${monthName(MONTHS[since])} and never gave the lead back.`
-    : `${names[leader]} led the race from the first month to the last.`);
+  if (before) headline("race-title")`${names[leader]} passed ${before} in ${N(monthName(MONTHS[since]))} and never gave the lead back.`;
+  else headline("race-title")`${names[leader]} led the race from the first month to the last.`;
 }
 const ICON_PLAY = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4.5 2.8v10.4a.6.6 0 0 0 .9.5l8.2-5.2a.6.6 0 0 0 0-1L5.4 2.3a.6.6 0 0 0-.9.5z" fill="currentColor"/></svg>';
 const ICON_PAUSE = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="3.5" y="2.5" width="3.2" height="11" rx="1" fill="currentColor"/><rect x="9.3" y="2.5" width="3.2" height="11" rx="1" fill="currentColor"/></svg>';
+const ICON_REPLAY = '<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3.2 8a4.8 4.8 0 1 0 1.5-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M2.6 2.4v3.2h3.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+/* Three states: playing (pause icon), paused mid-way (play icon), finished (replay icon and label). */
 function setPlayButton() {
-  const b = document.getElementById("race-play");
-  b.innerHTML = race.playing ? ICON_PAUSE : ICON_PLAY;
-  b.setAttribute("aria-label", race.playing ? "Pause race" : "Play race");
+  const b = document.getElementById("race-play"), ended = !race.playing && race.f >= MONTHS.length - 1;
+  b.innerHTML = race.playing ? ICON_PAUSE : ended ? ICON_REPLAY : ICON_PLAY;
+  b.setAttribute("aria-label", race.playing ? "Pause race" : ended ? "Replay race" : "Play race");
   b.setAttribute("aria-pressed", String(race.playing));
+  b.classList.toggle("ended", ended);
 }
 function playRace() {
   if (race.timer) race.timer.stop();
@@ -328,7 +349,7 @@ function drawObsessions() {
   rows.on("pointermove", show).on("pointerleave", clear);
   keyboardTour(svg, paths, show, clear);
   const top = obs[0];
-  setText("obs-title", `I played “${top.track}” ${top.peak} times in a single week.`);
+  headline("obs-title")`I played “${top.track}” ${N(`${top.peak} times`)} in a single week.`;
 }
 
 /* ================= 4. Canserbero spotlight ================= */
@@ -395,7 +416,7 @@ function drawSpotlight() {
   });
   canvas.addEventListener("pointerleave", hideTip);
   const y0 = years[0], peakYear = years.reduce((a, b) => (b[1] > a[1] ? b : a));
-  setText("spot-title", `${S.artist} went from ${fmtH(y0[1])} hours in ${y0[0]} to ${fmtH(peakYear[1])} hours in ${peakYear[0]}.`);
+  headline("spot-title")`${S.artist} went from ${fmtH(y0[1])} hours in ${y0[0]} to ${N(`${fmtH(peakYear[1])} hours`)} in ${peakYear[0]}.`;
   setText("spot-sub", `${fmt(S.plays)} plays and ${fmtH(S.hours)} hours on ${S.activeDays} different days, with a longest run of ${S.longestStreak} days in a row. ` +
     `Each dot is one play, by date and hour of day; my three most played songs are lit, and clicking one isolates it.`);
 }
@@ -442,7 +463,7 @@ function drawClock() {
   paths.on("pointermove", show).on("pointerleave", clear);
   keyboardTour(svg, paths, show, clear);
   const total = d3.sum(cells, c => c.plays), night = d3.sum(cells.filter(c => c.hr < 6), c => c.plays);
-  setText("clock-title", `My music peaks on ${DAYS[peak.dow]}s at ${hh(peak.hr)}; only ${pct(night / total)} of it plays between midnight and 6.`);
+  headline("clock-title")`My music peaks on ${DAYS[peak.dow]}s at ${N(hh(peak.hr))}; only ${pct(night / total)} of it plays between midnight and 6.`;
 }
 
 /* ================= 6. Skips ================= */
@@ -510,9 +531,8 @@ function drawSkips() {
   dots.on("pointermove", show).on("pointerleave", clear);
   keyboardTour(svg, dots, show, clear);
   const low = arts[0], high = arts.at(-1), sameish = Math.abs(K.mode.shuffle - K.mode.chosen) < 0.01;
-  setText("skip-title", sameish
-    ? `Shuffle or not, I skip ${pct(K.overall)} of songs; ${low.name} almost never gets skipped.`
-    : `I skip ${pct(K.overall)} of songs, ${pct1(K.mode.shuffle)} on shuffle against ${pct1(K.mode.chosen)} when I pick.`);
+  if (sameish) headline("skip-title")`Shuffle or not, I skip ${N(pct(K.overall))} of the songs I start.`;
+  else headline("skip-title")`I skip ${N(pct(K.overall))} of songs: ${pct1(K.mode.shuffle)} on shuffle, ${pct1(K.mode.chosen)} when I pick.`;
   setText("skip-sub", `${low.name} is the artist I skip least (${pct1(low.rate)}), ${high.name} the most (${pct1(high.rate)}). ` +
     `Each bubble is an artist with at least ${K.minPlays} plays, sized by plays; further left means I let the songs play.`);
   setText("skip-how", `A skip is any play shorter than ${D.meta.skipMs / 1000} seconds, the same threshold Spotify uses to count a stream. ` +
@@ -520,7 +540,7 @@ function drawSkips() {
 }
 
 /* ================= 7. Travel map ================= */
-const travel = { view: "world" };
+const travel = { view: null }; // null until the visitor picks; phones then start in Europe
 function drawTravel() {
   const root = document.getElementById("travel");
   root.innerHTML = "";
@@ -531,17 +551,19 @@ function drawTravel() {
   const europe = { type: "FeatureCollection", features: visited.filter(f => { const [lon, lat] = d3.geoCentroid(f); return lon > -25 && lon < 40 && lat > 34; }) };
   const projection = d3.geoNaturalEarth1();
   const fit = view => { projection.fitExtent([[inset, 36], [W - inset, H - 12]], view === "europe" ? europe : world); return [projection.scale(), projection.translate()]; };
-  fit(travel.view);
+  const view = travel.view ?? (isPhone() ? "europe" : "world");
+  fit(view);
   const path = d3.geoPath(projection);
   const hours = d3.scaleSequentialLog(d3.interpolateRgbBasis(HEAT.slice(1))).domain(d3.extent(D.travel, t => t.hours));
   const width = d3.scaleSqrt().domain([0, d3.max(D.travel.filter(t => t.cc !== "ES"), t => t.hours)]).range([0.8, 7]);
   const svg = d3.select(root).append("svg").attr("width", W).attr("height", H).attr("role", "img")
-    .attr("aria-label", "World map of countries where I listened, with arcs from Spain sized by hours");
+    .attr("aria-label", "World map of countries where I listened, with arcs from Spain sized by hours")
+    .style("overflow", "hidden"); // zoomed views must not paint outside the chart
   const bar = d3.select(root).insert("div", "svg").attr("class", "map-zoom");
   bar.append("span").text("Zoom to");
   const switcher = bar.append("div").attr("class", "view-switch").attr("role", "group").attr("aria-label", "Map zoom");
-  ["world", "europe"].forEach(v => switcher.append("button").attr("type", "button").attr("aria-pressed", String(travel.view === v)).text(v === "world" ? "World" : "Europe")
-    .on("click", () => { if (travel.view === v) return; travel.view = v; switcher.selectAll("button").attr("aria-pressed", function () { return String(this.textContent.toLowerCase() === v); }); flyTo(v); }));
+  ["world", "europe"].forEach(v => switcher.append("button").attr("type", "button").attr("aria-pressed", String(view === v)).text(v === "world" ? "World" : "Europe")
+    .on("click", () => { if ((travel.view ?? view) === v) return; travel.view = v; switcher.selectAll("button").attr("aria-pressed", function () { return String(this.textContent.toLowerCase() === v); }); flyTo(v); }));
   const sphere = svg.append("path").datum({ type: "Sphere" }).attr("fill", "#0e0e12").attr("stroke", "#1b1b20");
   const lands = svg.append("g").selectAll("path").data(world.features).join("path")
     .attr("fill", f => (byId.has(+f.id) ? hours(byId.get(+f.id).hours) : "#16161b")).attr("stroke", "#09090b").attr("stroke-width", 0.5);
@@ -555,7 +577,7 @@ function drawTravel() {
   const pins = svg.append("g").selectAll("circle").data(trips).join("circle").attr("r", d => 2 + width(d.t.hours) * 0.6).attr("fill", NEUTRAL_HI).style("pointer-events", "none");
   const homePin = svg.append("circle").attr("r", 5).attr("fill", "var(--ink)").attr("class", "halo");
   const labels = svg.append("g").style("pointer-events", "none");
-  const labelled = D.travel.slice(0, isPhone() ? 4 : 10);
+  const labelled = D.travel.slice(0, isPhone() ? 3 : 10);
   function place() {
     sphere.attr("d", path); lands.attr("d", path); arcs.attr("d", d => path(d.line));
     pins.attr("transform", d => `translate(${projection(d.dest)})`);
@@ -605,7 +627,7 @@ function drawTravel() {
   keyboardTour(svg, lands.filter(f => byId.has(+f.id)).sort((a, b) => order.get(+a.id) - order.get(+b.id)), show, clear);
   const total = d3.sum(D.travel, t => t.hours), abroad = total - (byId.get(724)?.hours ?? 0);
   const second = D.travel[1];
-  setText("travel-title", `${pct(abroad / total)} of my listening happened outside Spain, across ${D.travel.length - 1} countries; ${second.name} comes second with ${fmtH(second.hours)} hours.`);
+  headline("travel-title")`${N(pct(abroad / total))} of my listening happened outside Spain, across ${D.travel.length - 1} countries; ${second.name} comes second with ${fmtH(second.hours)} hours.`;
 }
 
 /* ================= 8. Discovery ================= */
@@ -653,14 +675,14 @@ function drawDiscovery() {
   keyboardTour(svg, hit, show, clear);
   setLegend("disc-legend", [["New artists that month (up)", NEUTRAL_HI], [`Share of plays from artists known over ${V.oldFriendDays} days (down)`, NEUTRAL_LO]]);
   const total = d3.sum(V.newArtists);
-  setText("disc-title", `I met ${fmt(total)} new artists since ${MONTHS[0].getFullYear()}; ${monthName(MONTHS[best])} alone brought ${V.newArtists[best]}.`);
+  headline("disc-title")`I met ${N(fmt(total))} new artists since ${MONTHS[0].getFullYear()}; ${monthName(MONTHS[best])} alone brought ${V.newArtists[best]}.`;
   setText("disc-sub", "Bars rise with the artists I played for the very first time each month. The area below grows when I went back to artists I had known for over a year: explorer months push up, comfort months pull down.");
 }
 
 /* ================= Ending ================= */
 function drawEnding() {
   const m = D.meta, binge = D.obsessions[0];
-  setText("end-title", `${fmt(m.plays)} plays, ${fmt(m.artists)} artists, ${D.travel.length} countries, and one song ${binge.peak} times in a week.`);
+  headline("end-title")`${N(fmt(m.plays))} plays, ${fmt(m.artists)} artists, ${D.travel.length} countries, and one song ${binge.peak} times in a week.`;
   setText("method-note", `${fmt(m.plays)} music plays, ${fmt(m.artists)} artists and ${fmt(m.tracks)} songs, ${longDay(FIRST_DAY)} to ${longDay(parseDay(m.lastDay))}. ` +
     "Earlier logs exist but are sparse, so the story starts in May 2021. Hours are time actually played; podcasts and video are left out. " +
     "Artist first plays use the full history back to 2014, so 2021's discovery numbers are slightly inflated. " +
