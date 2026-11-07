@@ -1,0 +1,44 @@
+/* Sibling theme of "Ten years talking": same master plan from tokens.css, own palette.
+   Deep black page, neon series colours. Loaded after tokens.css so these values win. */
+:root {
+  --page: #09090b; --raised: #151519; --ink: #f3f2ee; --ink-2: #c4c3bb; --muted: #8b8a94;
+  --grid: #232329; --axis: #35353d; --border: rgba(255,255,255,.1);
+  --accent: #b4f03c;
+  --on-neon: #09090b; /* text on a neon fill: neon is bright, so text is near black */
+}
+
+.banner b { color: var(--accent); }
+.eyebrow b { color: var(--accent); font-weight: 400; }
+#tip b { color: var(--ink); }
+#tip .k { color: var(--muted); }
+#tip .bar { height: 4px; border-radius: 2px; background: var(--accent); margin-top: 6px; }
+
+/* ---------- Hero ---------- */
+.hero { position: relative; overflow: hidden; isolation: isolate; }
+.hero > *:not(canvas) { position: relative; z-index: 1; }
+#hero-eq { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; opacity: .55; pointer-events: none; }
+.hero::after { content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none;
+  background: linear-gradient(90deg, var(--page) 0%, rgba(9,9,11,.88) 38%, rgba(9,9,11,.35) 75%, rgba(9,9,11,.2) 100%); }
+.hero h1 .num { color: var(--accent); }
+.scroll-cue { margin-top: 32px; font-size: 13px; color: var(--muted); letter-spacing: .14em; text-transform: uppercase; }
+.scroll-cue span { display: inline-block; animation: nudge 1.8s ease-in-out infinite; }
+@keyframes nudge { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(5px); } }
+
+/* ---------- Controls ---------- */
+.player { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 12px 16px; font-size: 13px; color: var(--muted); }
+.player button { all: unset; cursor: pointer; display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 999px; background: var(--accent); color: var(--on-neon); font-size: 14px; }
+.player button:focus-visible, .legend button:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+.player input[type=range] { width: min(420px, 60vw); accent-color: var(--accent); }
+.player output { min-width: 72px; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* ---------- Strip of stat chips above a chart ---------- */
+.chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 32px; font-size: 13px; color: var(--muted); }
+.chips b { display: block; font-size: 24px; line-height: 1.1; color: var(--ink); font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.chips .hi b { color: var(--accent); }
+
+/* Race month watermark */
+.race-month { font-size: clamp(48px, 9vw, 120px); font-weight: 700; letter-spacing: -.04em; fill: #1b1b20 !important; }
+
+.year .swatch { background: var(--accent); }
+
+@media (prefers-reduced-motion: reduce) { .scroll-cue span { animation: none; } }

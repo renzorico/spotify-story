@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
+<title>Five years listening</title>
+<meta name="description" content="A scroll story of five and a half years of my Spotify listening, 2021 to 2026: artists, obsessions, habits, skips, travel and discovery.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%2309090b'/%3E%3Crect x='3' y='7' width='2' height='6' fill='%23b4f03c'/%3E%3Crect x='7' y='3' width='2' height='10' fill='%23b4f03c'/%3E%3Crect x='11' y='5' width='2' height='8' fill='%23b4f03c'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+<div class="banner" id="banner"><span class="note"><b>Five years listening.</b> My Spotify history, 2021 to 2026. Aggregates only: no raw plays, no IP addresses, no exact timestamps.</span></div>
+<main>
+
+<section class="screen hero" id="s-hero">
+  <canvas id="hero-eq" aria-hidden="true"></canvas>
+  <p class="eyebrow">Spotify streaming history · <b id="hero-range"></b></p>
+  <div>
+    <h1 id="hero-title"></h1>
+    <p class="lede" id="hero-lede"></p>
+  </div>
+  <div class="stats" id="stats"></div>
+  <p class="scroll-cue">Scroll <span>↓</span></p>
+</section>
+
+<section class="screen" id="s-river">
+  <div class="wrap"><div class="head"><h2 id="river-title"></h2>
+    <p class="sub">Each band is one of my seven most played artists, and its thickness is the hours I gave it that month. Bands swell and vanish: those are eras. Hover a band for the month.</p></div></div>
+  <div class="wrap"><ul class="legend" id="river-legend"></ul></div>
+  <div id="river" class="fill"></div>
+</section>
+
+<section class="screen" id="s-race">
+  <div class="wrap"><div class="head"><h2 id="race-title"></h2>
+    <p class="sub">Cumulative hours per artist, month by month. It plays when it comes into view; pause it or drag the slider to any month.</p></div></div>
+  <div class="wrap player">
+    <button id="race-play" type="button" aria-label="Pause race" aria-pressed="true">❚❚</button>
+    <input id="race-scrub" type="range" min="0" step="0.01" value="0" aria-label="Race month">
+    <output id="race-label" for="race-scrub"></output>
+  </div>
+  <div id="race" class="fill"></div>
+</section>
+
+<section class="screen" id="s-obsessions">
+  <div class="wrap"><div class="head"><h2 id="obs-title"></h2>
+    <p class="sub">Every row is one song and every spike is one week of plays, all on the same timeline. The tall thin spikes are binges: a song on repeat for a week, then mostly gone.</p></div></div>
+  <div id="obsessions" class="fill"></div>
+</section>
+
+<section class="screen" id="s-spotlight">
+  <div class="wrap"><div class="head"><h2 id="spot-title"></h2>
+    <p class="sub" id="spot-sub"></p></div></div>
+  <div class="wrap"><div class="years" id="spot-years"></div></div>
+  <div class="wrap"><ul class="legend" id="spot-legend"></ul></div>
+  <div id="spotlight" class="fill"></div>
+</section>
+
+<section class="screen" id="s-clock">
+  <div class="wrap"><div class="head"><h2 id="clock-title"></h2>
+    <p class="sub">A week as a clock: the angle is the hour, each ring is a weekday from Monday inside to Sunday outside, and brighter means more plays. Hover a cell to see who owned that hour.</p></div></div>
+  <div id="clock" class="fill"></div>
+</section>
+
+<section class="screen" id="s-skips">
+  <div class="wrap"><div class="head"><h2 id="skip-title"></h2>
+    <p class="sub" id="skip-sub"></p>
+    <details class="how"><summary>How is this made?</summary><p id="skip-how"></p></details></div></div>
+  <div class="wrap chips" id="skip-chips"></div>
+  <div id="skips" class="fill"></div>
+</section>
+
+<section class="screen" id="s-travel">
+  <div class="wrap"><div class="head"><h2 id="travel-title"></h2>
+    <p class="sub">Every arc leaves Spain for a country where I pressed play, and thicker means more hours there. Hover a country for its hours and what I played most in it.</p></div></div>
+  <div id="travel" class="fill"></div>
+</section>
+
+<section class="screen" id="s-discovery">
+  <div class="wrap"><div class="head"><h2 id="disc-title"></h2>
+    <p class="sub" id="disc-sub"></p></div></div>
+  <div class="wrap"><ul class="legend" id="disc-legend"></ul></div>
+  <div id="discovery" class="fill"></div>
+</section>
+
+<section class="screen" id="s-method">
+  <div class="wrap"><div class="head"><h2>How it was made.</h2>
+    <p class="sub">Spotify sends a full listening log on request; a Python script turns it into the aggregates on this page and nothing else. Every chart is drawn in the browser from that one small file, with no network calls.</p></div></div>
+  <div class="wrap rail">
+    <ol class="pipeline">
+      <li><b>Request</b>Extended streaming history from Spotify's privacy page.</li>
+      <li><b>Load</b>JSON logs into DuckDB, music only, 2021 to 2026.</li>
+      <li><b>Clean</b>UTC to Madrid time; IP addresses dropped.</li>
+      <li><b>Define</b>A skip is a play under 30 seconds.</li>
+      <li><b>Aggregate</b>By month, week, hour, artist and country.</li>
+      <li><b>Render</b>D3 in the browser, from one 84 KB file.</li>
+    </ol>
+  </div>
+  <div class="wrap"><div class="endnote"><p id="method-note"></p><footer>Personal data, my own account. Built with Claude Code.</footer></div></div>
+</section>
+
+</main>
+<div id="tip" role="status"></div>
+
+<script src="d3.min.js"></script>
+<script src="data.js"></script>
+<script src="world.js"></script>
+<script src="helpers.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
