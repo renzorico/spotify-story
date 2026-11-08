@@ -148,3 +148,40 @@ h2 .num { color: var(--accent); font-variant-numeric: tabular-nums; }
 .player .view-switch button[aria-pressed="true"] { background: var(--ink); color: var(--page); }
 .player .view-switch button:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 @media (pointer: coarse) { .player .view-switch button { min-height: 44px; display: inline-flex; align-items: center; } }
+
+/* ---------- Third pass ---------- */
+/* Hero: everything centred under the particle number. */
+.hero { align-items: center; text-align: center; }
+.hero .lede { margin-inline: auto; }
+.hero .stats { width: 100%; justify-items: center; }
+.hero .stat { text-align: center; }
+#hero-number { margin-inline: auto; }
+
+/* Map panel: long song names truncate instead of spilling out. */
+.country-panel ol { grid-template-columns: minmax(0, 1fr); }
+.country-panel li { min-width: 0; }
+.country-panel li span { flex: 1 1 auto; }
+.country-panel li b { flex: none; }
+.country-panel li small { overflow: hidden; text-overflow: ellipsis; }
+
+/* Genre player: play button beside the year picker. */
+.genre-bar { gap: 12px; align-items: center; flex-wrap: wrap; }
+
+/* Season playlists */
+#seasons { display: flex; align-items: center; }
+.playlists { width: 100%; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 28px; padding: 0 var(--gutter); }
+.playlist h3 { margin: 0 0 14px; font-size: 22px; font-weight: 650; color: var(--ink); display: flex; align-items: baseline; gap: 10px; }
+.playlist h3 span { font-size: 13px; font-weight: 400; color: var(--muted); }
+.playlist ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 14px; }
+.playlist li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; align-items: end; cursor: default; border-radius: 6px; outline-offset: 4px; }
+.playlist li:focus-visible { outline: 2px solid var(--ink); }
+.playlist .song { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; color: var(--ink); }
+.playlist .song small { display: block; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 400; color: var(--muted); }
+.playlist .share { font-size: 18px; font-weight: 650; color: var(--ink); font-variant-numeric: tabular-nums; }
+.playlist .track { grid-column: 1 / -1; position: relative; height: 8px; border-radius: 4px; background: #1b1b20; }
+.playlist .track i { position: absolute; inset: 0 auto 0 0; border-radius: 4px; transition: width .9s cubic-bezier(.2, .8, .2, 1); }
+.playlist .track em { position: absolute; top: -3px; bottom: -3px; width: 1px; background: var(--muted); opacity: .7; }
+@media (max-width: 1000px) { .playlists { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 36px; } }
+@media (max-width: 600px) { .playlists { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .playlist .track i { transition: none; } }
+.spiral-year { fill: var(--ink-2) !important; font-size: 11px; font-weight: 600; paint-order: stroke; stroke: #09090b; stroke-width: 3px; pointer-events: none; }

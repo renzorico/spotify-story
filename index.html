@@ -7,8 +7,8 @@
 <title>Five years listening</title>
 <meta name="description" content="A scroll story of five and a half years of my Spotify listening, 2021 to 2026: artists, songs with a story, genres, seasons, travel and discovery.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%2309090b'/%3E%3Crect x='3' y='7' width='2' height='6' fill='%23b4f03c'/%3E%3Crect x='7' y='3' width='2' height='10' fill='%23b4f03c'/%3E%3Crect x='11' y='5' width='2' height='8' fill='%23b4f03c'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="tokens.css?v=12">
-<link rel="stylesheet" href="theme.css?v=12">
+<link rel="stylesheet" href="tokens.css?v=17">
+<link rel="stylesheet" href="theme.css?v=17">
 </head>
 <body>
 <div class="banner" id="banner"><span class="note"><b>Five years listening.</b> My Spotify history, 2021 to 2026.</span><span class="progress" aria-hidden="true"><span id="progress"></span></span></div>
@@ -50,14 +50,13 @@
 
 <section class="screen" id="s-stories">
   <div class="wrap"><div class="head"><h2 id="story-title"></h2>
-    <p class="sub">Ten songs by ten different artists, each picked by the data for the one thing that makes it odd. Every dot is a day I played it, bigger for more plays. Hover a dot, or tab to the chart and use the arrow keys.</p></div></div>
+    <p class="sub">Seven songs by seven different artists, each picked by the data for the one thing that makes it odd. Every spike is a week of plays; the number is the busiest week. Hover a row, or tab to the chart and use the arrow keys.</p></div></div>
   <div id="stories" class="fill"></div>
 </section>
 
 <section class="screen" id="s-rank">
   <div class="wrap"><div class="head"><h2 id="rank-title"></h2>
     <p class="sub" id="rank-sub"></p></div></div>
-  <div class="wrap"><div class="years" id="rank-years"></div></div>
   <div id="rank" class="fill"></div>
 </section>
 
@@ -65,14 +64,14 @@
   <div class="wrap"><div class="head"><h2 id="genre-title"></h2>
     <p class="sub" id="genre-sub"></p>
     <details class="how"><summary>How is this made?</summary><p id="genre-how"></p></details></div></div>
-  <div class="wrap genre-bar"><div class="view-switch" id="genre-years" role="group" aria-label="Year"></div></div>
+  <div class="wrap genre-bar player"><button id="genre-play" type="button" aria-label="Play the years" aria-pressed="false"></button><div class="view-switch" id="genre-years" role="group" aria-label="Year"></div></div>
   <div class="wrap"><ul class="legend" id="genre-legend"></ul></div>
   <div id="genres" class="fill"></div>
 </section>
 
 <section class="screen" id="s-seasons">
   <div class="wrap"><div class="head"><h2 id="season-title"></h2>
-    <p class="sub">The year as a clock, January at the top. Each dot is a song I played in at least two different years, placed at the time of year it peaks; the further out, the more its plays crowd into that one season. Hover a dot for the song.</p></div></div>
+    <p class="sub">For each season, the five songs whose plays crowd into it most, one per artist, counting only songs I came back to in that season in at least two different years. A song played evenly all year would sit at 25%, the faint line.</p></div></div>
   <div class="wrap"><ul class="legend" id="season-legend"></ul></div>
   <div id="seasons" class="fill"></div>
 </section>
@@ -113,10 +112,10 @@
 </main>
 <div id="tip" role="status"></div>
 
-<script src="d3.min.js?v=12"></script>
-<script src="data.js?v=12"></script>
-<script src="world.js?v=12"></script>
-<script src="helpers.js?v=12"></script>
-<script src="app.js?v=12"></script>
+<script src="d3.min.js?v=17"></script>
+<script src="data.js?v=17"></script>
+<script src="world.js?v=17"></script>
+<script src="helpers.js?v=17"></script>
+<script src="app.js?v=17"></script>
 </body>
 </html>
